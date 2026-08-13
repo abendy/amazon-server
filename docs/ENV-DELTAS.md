@@ -11,7 +11,7 @@ credentials. The paths below describe provisioner-owned locations only.
 
 | Site | Environment | `server_name` | Listeners and TLS | Docroot | `HTTP_CI_ENV` | FPM upstream | Auth | Access / error logs |
 |---|---|---|---|---|---|---|---|---|
-| RSVP | local | `localhost 127.0.0.1` | HTTP `80`, default server | `/var/www/html` | `docker` | `fpm:9000` | Off | `/var/log/nginx/rsvp-access.log` / `/var/log/nginx/rsvp-error.log` |
+| RSVP | local | `localhost 127.0.0.1 rsvp.local` (rsvp.local for tailnet viewing) | HTTP `80`, default server | `/var/www/html` | `docker` | `fpm:9000` | Off | `/var/log/nginx/rsvp-access.log` / `/var/log/nginx/rsvp-error.log` |
 | RSVP | staging | `stg.rsvp.amazonmgmstudiosawards.com` | HTTP `80` redirects to TLS `443`; certificate is provisioner-owned | provisioner-owned RSVP docroot | `development` | provisioner-owned RSVP FPM pool | `$rsvp_auth` defaults to `Staging` for non-allow-listed embed origins; `/etc/nginx/.htpasswd` applies only to `/rsvp/consideramazon/*` | provisioner-owned RSVP log root |
 | RSVP | production | `rsvp.amazonmgmstudiosawards.com` | HTTP `80` redirects to TLS `443`; certificate is provisioner-owned | provisioner-owned RSVP docroot | `production` | provisioner-owned RSVP FPM pool | Off; no `.htpasswd` gate in the production embed block | provisioner-owned RSVP log root |
 | AMPAS | local | `ampas.local` | HTTP `80` | `/var/www/html/amazon-studios-ampas/web` | Not applicable | `ampas-fpm:9000` | Off | `/var/log/nginx/ampas-access.log` / `/var/log/nginx/ampas-error.log` |
