@@ -1,0 +1,25 @@
+name: amazon-server
+
+networks:
+  shared:
+    name: amazon-local
+    external: true
+
+services:
+  nginx:
+    container_name: amazon-server-nginx
+    platform: linux/arm64
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx:/etc/nginx:ro
+      - ../rsvp/admin:/var/www/html/admin:ro
+      - ../rsvp/public:/var/www/html/public:ro
+      - ../rsvp/logs:/var/www/html/logs:ro
+      - ../ampas:/var/www/html/amazon-studios-ampas:ro
+      - ../guilds:/var/www/html/amazon-studios-guilds:ro
+    networks:
+      shared:
+        aliases:
+          - nginx

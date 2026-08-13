@@ -24,9 +24,43 @@ production. A difference outside that list is a bug.
 **No secrets.** Certificates, `.htpasswd` contents, and credentials never enter this
 repo — they are provisioner-owned and listed as env deltas.
 
-The local RSVP harness needs only the RSVP application mounts. The AMPAS and Guilds
-blocks are loaded for syntax validation until RS-06 supplies their local WordPress
-docroots and FPM pools.
+## Local Docker stack
+
+The local harness has one nginx container and one shared Docker network. The site repositories
+provide the PHP-FPM and MariaDB containers; this repository provides nginx and mounts the three
+site docroots read-only.
+
+Clone these repositories as siblings:
+
+```text
+amazon/
+├── _db/
+├── _server/
+├── ampas/
+├── guilds/
+└── rsvp/
+```
+
+Create the external network once, then boot the site services before nginx:
+
+```bash
+docker network create amazon-local
+docker compose -f ../rsvp/docker-compose.yml up -d
+docker compose -f ../ampas/docker-compose.yml up -d
+docker compose -f ../guilds/docker-compose.yml up -d
+docker compose -f docker-compose.yml up -d
+```
+
+The network-create command is safe to repeat only after checking whether the network already
+exists. The final command publishes port 80 and loads `localhost`, `ampas.local`, and
+`guilds.local`. Use `curl --resolve <name>:80:127.0.0.1` for host-routed checks.
+
+Each WordPress MariaDB service uses a new named volume and imports its matching `_db/` dump on
+first boot. Existing `ampas_mysql_data` and `guilds_mysql_data` volumes are not referenced by
+these Compose files and must not be removed.
+
+The local stack is a development harness only. It does not deploy or change the nginx serving
+configuration on the mini or any hosted environment.
 
 ## Provenance
 
