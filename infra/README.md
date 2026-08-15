@@ -332,7 +332,7 @@ manage or modify any distribution.
 ## Staging verification
 
 Run the ratified must-serve matrix in
-[`serving-surface.md`](../../_docs/rsvp/reference/serving-surface.md) against the static IP before
+[`restructure-serving-surface.md`](../../_docs/rsvp/reference/restructure-serving-surface.md) against the static IP before
 and after the origin flip. Compare against the **current landed local matrix capture** (the latest
 `_artifacts/RS-*` final matrix), never a historical one — the hosted/direct page family 404s by
 driver ruling 7 (2026-08-12), and API validation rules move with the code, so older baselines
