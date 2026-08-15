@@ -1,0 +1,8 @@
+region            = "REPLACE_ME"
+availability_zone = "REPLACE_ME"
+bundle_id         = "REPLACE_ME"
+blueprint_id      = "REPLACE_ME" # Ubuntu 24.04 is usually ubuntu_24_04.
+instance_name     = "REPLACE_ME"
+static_ip_name    = "REPLACE_ME"
+ssh_key_name      = "REPLACE_ME"
+# server_branch   = "develop" # only set for a deliberate pre-land test build

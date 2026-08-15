@@ -11,8 +11,8 @@ credentials. The paths below describe provisioner-owned locations only.
 
 | Site | Environment | `server_name` | Listeners and TLS | Docroot | `HTTP_CI_ENV` | FPM upstream | Auth | Access / error logs |
 |---|---|---|---|---|---|---|---|---|
-| RSVP | local | `localhost 127.0.0.1 rsvp.local` (rsvp.local for tailnet viewing) | HTTP `80`, default server | `/var/www/html` | `docker` | `fpm:9000` | Off | `/var/log/nginx/rsvp-access.log` / `/var/log/nginx/rsvp-error.log` |
-| RSVP | staging | `stg.rsvp.amazonmgmstudiosawards.com` | HTTP `80` redirects to TLS `443`; certificate is provisioner-owned | provisioner-owned RSVP docroot | `development` | provisioner-owned RSVP FPM pool | `$rsvp_auth` defaults to `Staging` for non-allow-listed embed origins; `/etc/nginx/.htpasswd` applies only to `/rsvp/consideramazon/*` | provisioner-owned RSVP log root |
+| RSVP | local | `localhost 127.0.0.1 rsvp.local` (rsvp.local for tailnet viewing) | HTTP `80`, default server | `/var/www/html` | `local` | `fpm:9000` | Off | `/var/log/nginx/rsvp-access.log` / `/var/log/nginx/rsvp-error.log` |
+| RSVP | staging | `stg.rsvp.amazonmgmstudiosawards.com` | HTTP `80` redirects to TLS `443`; certificate is provisioner-owned | provisioner-owned RSVP docroot | `staging` | provisioner-owned RSVP FPM pool | `$rsvp_auth` defaults to `Staging` for non-allow-listed embed origins; `/etc/nginx/.htpasswd` applies only to `/rsvp/consideramazon/*` | provisioner-owned RSVP log root |
 | RSVP | production | `rsvp.amazonmgmstudiosawards.com` | HTTP `80` redirects to TLS `443`; certificate is provisioner-owned | provisioner-owned RSVP docroot | `production` | provisioner-owned RSVP FPM pool | Off; no `.htpasswd` gate in the production embed block | provisioner-owned RSVP log root |
 | AMPAS | local | `ampas.local` | HTTP `80` | `/var/www/html/amazon-studios-ampas/web` | Not applicable | `ampas-fpm:9000` | Off | `/var/log/nginx/ampas-access.log` / `/var/log/nginx/ampas-error.log` |
 | AMPAS | staging | `stg.amazonmgmstudiosawards.com` | HTTP `80` redirects to TLS `443`; certificate is provisioner-owned | `/var/www/html/amazon-studios-ampas/web` | Not applicable | provisioner-owned modern AMPAS WP pool | Off | provisioner-owned AMPAS log root |
@@ -21,8 +21,8 @@ credentials. The paths below describe provisioner-owned locations only.
 | Guilds | staging | `stg.amazonmgmstudiosguilds.com` | HTTP `80` redirects to TLS `443`; certificate is provisioner-owned | `/var/www/html/amazon-studios-guilds/web` | Not applicable | provisioner-owned modern Guilds WP pool | Off | provisioner-owned Guilds log root |
 | Guilds | production | `_` in the current coming-soon block; final host binding is not present in the deployed reference | HTTP `80` coming-soon placeholder until R4 supplies the TLS listener | `/var/www/html/amazon-studios-guilds/web` | Not applicable | provisioner-owned modern Guilds WP pool | Off | provisioner-owned Guilds log root |
 
-`HTTP_CI_ENV` is sent only to RSVP PHP-FPM. The shared line uses the local `docker` value; R4
-replaces it with `development` or `production` in the environment delta. The deployed production
+`HTTP_CI_ENV` is sent only to RSVP PHP-FPM. The shared line uses the `local` value; R4
+replaces it with `staging` or `production` in the environment delta. The deployed production
 parameter file supplies `production`, and the application also falls back to `production` when the
 key is absent; neither behavior is changed here.
 
@@ -82,3 +82,16 @@ The AMPAS and Guilds production WordPress blocks are authored here so all three 
 together under `nginx -t`. The deployed references show AMPAS and Guilds production behind
 coming-soon placeholders. RS-06 owns their live serving proof and the driver-controlled return of
 WordPress traffic; this packet does not deploy or cut traffic.
+
+## Managed database connections
+
+R4 run 4 consumes the existing Lightsail managed databases. Terraform and cloud-init do not create,
+alter, or import databases. The driver supplies each connection through the root-only
+`/root/amazon-staging/db.env` handoff described in `infra/README.md`; endpoints and credentials are
+never checked into this repository.
+
+| Site | Environment | Provisioner-owned values | Disposition |
+|---|---|---|---|
+| RSVP | staging | `RSVP_DB_HOST`, `RSVP_DB_PORT`, `RSVP_DB_NAME`, `RSVP_DB_USER`, `RSVP_DB_PASSWORD` | Driver supplies the existing managed-database connection; cloud-init only prepares the root-only handoff directory. |
+| AMPAS | staging | `AMPAS_DB_HOST`, `AMPAS_DB_PORT`, `AMPAS_DB_NAME`, `AMPAS_DB_USER`, `AMPAS_DB_PASSWORD` | Driver supplies the existing managed-database connection; cloud-init only prepares the root-only handoff directory. |
+| Guilds | staging | `GUILDS_DB_HOST`, `GUILDS_DB_PORT`, `GUILDS_DB_NAME`, `GUILDS_DB_USER`, `GUILDS_DB_PASSWORD` | Driver supplies the existing managed-database connection; cloud-init only prepares the root-only handoff directory. |

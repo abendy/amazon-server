@@ -62,6 +62,12 @@ these Compose files and must not be removed.
 The local stack is a development harness only. It does not deploy or change the nginx serving
 configuration on the mini or any hosted environment.
 
+## Lightsail staging
+
+The co-located staging instance is described by the flat Terraform root in
+[`infra/`](infra/). Read [`infra/README.md`](infra/README.md) before running the
+driver-owned apply sequence. Terraform state, plan files, tfvars, and crash logs stay local.
+
 ## Provenance
 
 Authored under the RSVP restructure track (RS-05+), translated from the deployed
