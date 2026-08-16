@@ -62,7 +62,7 @@ these Compose files and must not be removed.
 The local stack is a development harness only. It does not deploy or change the nginx serving
 configuration on the mini or any hosted environment.
 
-For laptop app containers against the mini's databases, follow the **Remote DB (laptop)** sections in the [AMPAS README](../ampas/README.md), [Guilds README](../guilds/README.md), and [RSVP development guide](../rsvp/docs/DEVELOPMENT.md); use the published tailnet ports in [`docs/ENV-DELTAS.md`](docs/ENV-DELTAS.md), create `amazon-local`, start each site's FPM service with `docker compose up -d --no-deps <fpm service>`, and start this repository's nginx last.
+For laptop app containers against the mini's databases, follow the **Remote DB** sections in the [AMPAS README](../ampas/README.md), [Guilds README](../guilds/README.md), and [RSVP development guide](../rsvp/docs/DEVELOPMENT.md); use the published tailnet ports in [`docs/ENV-DELTAS.md`](docs/ENV-DELTAS.md), create `amazon-local`, start each site's FPM service with `docker compose up -d --no-deps <fpm service>`, and start this repository's nginx last.
 
 ## Lightsail staging
 
