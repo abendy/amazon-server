@@ -47,7 +47,8 @@ The apply script:
    `dist/` path.
 2. Extracts the branch into a temporary directory, verifies every file hash, then replaces only
    that theme's `dist/` tree. Stale hashed chunks are removed by the replacement.
-3. Runs the theme's existing `scripts/purge-titles-cache.sh`.
+3. Runs the host wrapper at `_server/scripts/purge-theme-cache.sh`, which deletes only the
+   `vm_titles_catalog` WordPress transients and fails if the site's database cannot be reached.
 4. Pushes `deploy/live/<environment>` to the applied deploy commit.
 
 The server checkout needs Git fetch access to the theme repository and write access for the mutable
@@ -58,8 +59,42 @@ AMPAS  /var/www/html/amazon-studios-ampas
 Guilds /var/www/html/amazon-studios-guilds
 ```
 
-For a scratch clone or a non-standard path, set `THEME_DEPLOY_REPO_DIR`. To use a host-specific
-purge wrapper, set `THEME_DEPLOY_PURGE_SCRIPT` to that script before invoking the apply step.
+The hosted purge command is explicit and reads `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`,
+`DB_PASSWORD`, and `DB_PREFIX` from the deployed site's `.env`; matching keys in `.env.local`
+override them. It uses the host's `mariadb` or `mysql` client, then falls back to PHP PDO MySQL
+when the client is unavailable. The provisioned host has PHP 7.4 CLI and `php7.4-mysql`. No
+database credential is printed or written to logs.
+
+The apply script calls the purge hook without arguments. Set the site and wrapper for each apply:
+
+```bash
+THEME_DEPLOY_SITE=ampas \
+THEME_DEPLOY_ENVIRONMENT=staging \
+THEME_DEPLOY_PURGE_SCRIPT=/opt/amazon-server/scripts/purge-theme-cache.sh \
+_server/scripts/apply-theme-deploy.sh ampas staging deploy/staging-<timestamp>
+```
+
+`THEME_DEPLOY_ENVIRONMENT` supplies the label in the purge result because the apply script calls
+the hook without arguments. If it and `WP_ENV` are absent, the wrapper prints `unknown` rather
+than guessing an environment; the database purge still uses the deployed site's config.
+
+The direct wrapper form is also available for an operator check:
+
+```bash
+/opt/amazon-server/scripts/purge-theme-cache.sh ampas staging
+```
+
+For a scratch clone or a non-standard path, set `THEME_DEPLOY_REPO_DIR`; set
+`THEME_DEPLOY_CONFIG_DIR` only when the checkout and its `.env` root differ. The environment label
+is read from `WP_ENV` when the apply hook omits it. `THEME_DEPLOY_PURGE_SCRIPT` remains the escape
+hatch for an exotic host command.
+
+The local Docker harness's scratch checkout has no site `.env` because it is gitignored. Its
+scratch proof may set `THEME_DEPLOY_LOCAL_DOCKER=1`; the wrapper then reads the running site's
+MariaDB container environment. Hosted applies do not use this fallback.
+
+Page-cache plugins are outside this wrapper's scope. `THEME_DEPLOY_PAGE_CACHE_PURGE_SCRIPT` is a
+reserved hook name for the separate page-cache audit; the current apply path does not invoke it.
 
 ## Check status and clean up
 
