@@ -96,6 +96,23 @@ MariaDB container environment. Hosted applies do not use this fallback.
 Page-cache plugins are outside this wrapper's scope. `THEME_DEPLOY_PAGE_CACHE_PURGE_SCRIPT` is a
 reserved hook name for the separate page-cache audit; the current apply path does not invoke it.
 
+## What a dist deploy does NOT carry
+
+The deploy branch holds only the theme's 2026.1 `dist/` tree, and the apply script rejects any
+commit that reaches outside it. Everything else in the site repo — ACF field groups in
+`acf-json/`, `functions/*.php`, templates — reaches the instance by updating its checkout:
+
+```bash
+cd /var/www/html/amazon-studios-<site>
+git pull --ff-only origin develop
+```
+
+A change that lands PHP or ACF alongside built assets needs BOTH steps, or the site runs
+mismatched halves — a new ACF field stays invisible in WP admin until the checkout pull
+delivers its Local JSON (first hit: the Guilds cover-frame field, 2026-08-23). `dist/` is
+gitignored, so the pull never disturbs an applied deploy. The instance deploy keys are
+read-only: pulls work, pushes do not.
+
 ## Check status and clean up
 
 From a theme repository, status fetches the live marker from `origin` and compares it with the
