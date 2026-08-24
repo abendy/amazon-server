@@ -224,6 +224,8 @@ pm.max_spare_servers = 5
 pm.max_requests = 500
 php_admin_flag[log_errors] = on
 php_admin_value[error_log] = ${error_log}
+php_admin_value[upload_max_filesize] = 512M
+php_admin_value[post_max_size] = 512M
 POOL
 }
 
