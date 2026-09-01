@@ -209,8 +209,10 @@ apt-get install -y \
 
 # Composer comes from the phar installer, never apt: the Ubuntu composer
 # package depends on the distribution PHP and would install PHP 8 beside 7.4.
+# cloud-init's script runner provides no HOME, and the installer refuses to
+# run without one (first-boot finding, abendy/amazon-docs#85).
 if ! command -v composer >/dev/null 2>&1; then
-  curl -sS https://getcomposer.org/installer | php -- \
+  HOME="${HOME:-/root}" curl -sS https://getcomposer.org/installer | HOME="${HOME:-/root}" php -- \
     --install-dir=/usr/local/bin --filename=composer --quiet
 fi
 
