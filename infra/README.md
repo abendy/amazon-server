@@ -1,9 +1,15 @@
 # Lightsail staging
 
-This root module describes the one co-located Ubuntu 24.04 Lightsail staging instance for RSVP,
+This root module describes the co-located Ubuntu 24.04 Lightsail instances for RSVP,
 AMPAS, and Guilds. Terraform owns the instance, static IPv4 address, attachment, and public ports.
 Existing Lightsail CDN distributions, their domains and certificates, and the managed databases are
 driver-owned and stay outside Terraform.
+
+**Naming note:** "staging" in the surrounding names — the AWS profile and IAM policy/group
+labels, the `amazon-staging-provision` script, the `STAGING_` variable prefix, the
+`/root/amazon-staging` and template paths — is historical, from when this module only built
+staging. Since the `environment` variable landed, the same names serve both environments;
+normalizing them is tracked in the docs repo.
 
 ## Ground rules
 
