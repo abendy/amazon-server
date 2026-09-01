@@ -186,9 +186,18 @@ apply_deploy() {
     printf 'Running cache purge: %s\n' "$purge_script"
     sh "$purge_script"
 
-    git -C "$repo_dir" push --force "$REMOTE" \
-        "${deploy_commit}:refs/heads/${live_ref}"
-    printf 'Live marker: %s -> %s\n' "$live_ref" "$deploy_branch"
+    # The live marker is a mutable ref, so moving it is always a force
+    # push — and instance deploy keys are read-only by design, so this
+    # step routinely fails on the box. The apply above already succeeded;
+    # print the operator command instead of dying (#205).
+    if git -C "$repo_dir" push --force "$REMOTE" \
+        "${deploy_commit}:refs/heads/${live_ref}" 2>/dev/null; then
+        printf 'Live marker: %s -> %s\n' "$live_ref" "$deploy_branch"
+    else
+        printf 'Live marker push failed (read-only deploy key?). Apply is complete.\n'
+        printf 'Push the marker from a write-capable operator clone:\n'
+        printf '  git push --force origin %s:refs/heads/%s\n' "$deploy_commit" "$live_ref"
+    fi
 }
 
 main() {

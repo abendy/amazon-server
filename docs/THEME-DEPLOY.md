@@ -49,10 +49,17 @@ The apply script:
    that theme's `dist/` tree. Stale hashed chunks are removed by the replacement.
 3. Runs the host wrapper at `_server/scripts/purge-theme-cache.sh`, which deletes only the
    `vm_titles_catalog` WordPress transients and fails if the site's database cannot be reached.
-4. Pushes `deploy/live/<environment>` to the applied deploy commit.
+4. Tries to push `deploy/live/<environment>` to the applied deploy commit. Moving the marker is
+   always a force push (deploy branches are orphans), and the instance deploy keys are read-only
+   by design — so on the box this step normally fails after the apply has already succeeded. The
+   script prints the operator command; run it from a write-capable clone:
 
-The server checkout needs Git fetch access to the theme repository and write access for the mutable
-`deploy/live/<environment>` marker ref. The script uses the deployed paths from `_docs/WORKSPACE.md`:
+   ```bash
+   git push --force origin <deploy-commit>:refs/heads/deploy/live/<environment>
+   ```
+
+The server checkout needs Git fetch access to the theme repository. The marker write belongs to
+the operator clone (#205 ruling). The script uses the deployed paths from `_docs/WORKSPACE.md`:
 
 ```text
 AMPAS  /var/www/html/amazon-studios-ampas
