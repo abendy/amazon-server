@@ -73,6 +73,33 @@ Set every value in `terraform.tfvars`. Keep the file on the driver's machine. `r
 `bundle_id` have no defaults because they choose the billable location and instance size. The
 `static_ip` output is the origin address used for direct checks and the later CDN origin flip.
 
+## Production instance
+
+The same module builds the production instance. The `environment` variable selects the value
+set the provisioner renders (`staging` default): production server names, `HTTP_CI_ENV`,
+production TLS paths, and no `.htpasswd` gate on the embed. The bootstrap records the choice
+in `/etc/amazon-server.env` so provisioner re-runs keep rendering the same environment; an
+absent marker means staging, which is what existing staging instances rely on. The CSP
+snippet path (`snippets/rsvp-staging-csp.conf`) and the `db.env` handoff path are
+environment-invariant — historical names, per-instance contents.
+
+Build production beside the live staging instance, never over it:
+
+```bash
+export AWS_PROFILE=amazon-lightsail-staging
+terraform workspace new production   # once; later: terraform workspace select production
+cp terraform.tfvars production.tfvars
+$EDITOR production.tfvars            # environment = "production", unique instance/static-ip names
+terraform plan -var-file=production.tfvars -out=production.tfplan
+terraform show production.tfplan     # gate: 4 to add, 0 to change, 0 to destroy
+terraform apply production.tfplan
+```
+
+Keep production names out of `terraform.tfvars` so a later plan in the default workspace can
+never propose replacing staging. Every post-apply manual step below applies unchanged; the
+production Guilds host binding has no deployed reference and needs an explicit driver
+ratification before any CDN origin flip.
+
 ## Instance access
 
 Temporary SSH comes from `lightsail:GetInstanceAccessDetails` (in `LightsailStagingRead`,

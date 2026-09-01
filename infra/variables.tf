@@ -38,3 +38,14 @@ variable "server_branch" {
   type        = string
   default     = "develop"
 }
+
+variable "environment" {
+  description = "Serving environment the provisioner renders: staging or production. Recorded on the instance so provisioner re-runs keep rendering the same environment."
+  type        = string
+  default     = "staging"
+
+  validation {
+    condition     = contains(["staging", "production"], var.environment)
+    error_message = "environment must be staging or production."
+  }
+}

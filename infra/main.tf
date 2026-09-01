@@ -15,12 +15,13 @@ resource "aws_lightsail_instance" "staging" {
     "apt-get update",
     "apt-get install -y ca-certificates git",
     "echo '${var.server_branch}' > /etc/amazon-server.ref",
+    "echo '${var.environment}' > /etc/amazon-server.env",
     "git clone --depth 1 --branch '${var.server_branch}' https://github.com/abendy/amazon-server.git /opt/amazon-server",
     "exec bash /opt/amazon-server/infra/cloud-init.sh",
   ])
 
   tags = {
-    Environment = "staging"
+    Environment = var.environment
     ManagedBy   = "terraform"
     System      = "amazon-fyc"
   }

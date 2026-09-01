@@ -82,6 +82,37 @@ STAGING_CSP_INCLUDE='/etc/nginx/snippets/rsvp-staging-csp.conf'
 # packet does not create, alter, or import any database.
 STAGING_DB_ENV_FILE='/root/amazon-staging/db.env'
 
+# ENV-DELTAS.md: Site and environment values / production. The Terraform
+# bootstrap records the environment in /etc/amazon-server.env; provisioner
+# re-runs follow it, and an absent marker keeps the staging defaults above
+# (existing staging instances predate the marker). The STAGING_ variable
+# prefix is the template contract's historical name; only the values below
+# differ between environments. The CSP snippet path and db.env handoff path
+# are environment-invariant.
+AMAZON_SERVER_ENVIRONMENT="$(cat /etc/amazon-server.env 2>/dev/null || echo staging)"
+if [[ "$AMAZON_SERVER_ENVIRONMENT" == 'production' ]]; then
+  STAGING_RSVP_SERVER_NAME='rsvp.amazonmgmstudiosawards.com'
+  STAGING_RSVP_HTTP_CI_ENV='production'
+
+  # ENV-DELTAS.md: the production embed ships no .htpasswd gate. An empty
+  # realm leaves the $rsvp_auth map default at "off".
+  STAGING_RSVP_AUTH_REALM=''
+
+  STAGING_AMPAS_SERVER_NAME='amazonmgmstudiosawards.com www.amazonmgmstudiosawards.com'
+
+  # ENV-DELTAS.md records no deployed production Guilds host binding (the
+  # deployed reference is a coming-soon placeholder block). DRIVER RATIFY
+  # before any CDN origin flip.
+  STAGING_GUILDS_SERVER_NAME='amazonmgmstudiosguilds.com www.amazonmgmstudiosguilds.com'
+
+  STAGING_RSVP_TLS_CERT='/etc/letsencrypt/live/rsvp.amazonmgmstudiosawards.com/fullchain.pem'
+  STAGING_RSVP_TLS_KEY='/etc/letsencrypt/live/rsvp.amazonmgmstudiosawards.com/privkey.pem'
+  STAGING_AMPAS_TLS_CERT='/etc/letsencrypt/live/amazonmgmstudiosawards.com/fullchain.pem'
+  STAGING_AMPAS_TLS_KEY='/etc/letsencrypt/live/amazonmgmstudiosawards.com/privkey.pem'
+  STAGING_GUILDS_TLS_CERT='/etc/letsencrypt/live/amazonmgmstudiosguilds.com/fullchain.pem'
+  STAGING_GUILDS_TLS_KEY='/etc/letsencrypt/live/amazonmgmstudiosguilds.com/privkey.pem'
+fi
+
 # The packet provisions the serving tree only. Site releases are placed in the
 # docroots by the driver after apply, and existing managed databases stay out
 # of this instance module.
@@ -274,6 +305,12 @@ done
 
 render_base_config() {
   sed -i "s/^user nginx;$/user ${NGINX_USER};/" "$NGINX_ROOT/nginx.conf"
+
+  # An empty realm (production) keeps the $rsvp_auth map default at "off" —
+  # no .htpasswd gate on the embed.
+  if [[ -z "$STAGING_RSVP_AUTH_REALM" ]]; then
+    return
+  fi
 
   local rendered_config
   rendered_config="$(mktemp)"
