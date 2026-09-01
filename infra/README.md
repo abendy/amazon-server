@@ -261,6 +261,13 @@ git clone --depth 1 --branch <integration-branch> \
   github-ampas:<org>/<repo>.git /var/www/html/amazon-studios-ampas
 ```
 
+The rsvp skeleton nests an empty embed directory (`public/consideramazon/`), so plain
+`rmdir` refuses it; delete its empty tree with the same non-empty safety:
+
+```bash
+sudo find /var/www/html/rsvp -depth -type d -empty -delete
+```
+
 **WordPress dependencies (AMPAS and Guilds).** cloud-init installs `unzip` and
 Composer (phar installer — never `apt install composer`, which installs a second,
 newer PHP alongside 7.4). Run `composer install --no-dev --no-interaction` at each WP
@@ -288,7 +295,7 @@ leave the instance):
 
 ```text
 DB_NAME  DB_USER  DB_PASSWORD  DB_HOST  DB_PORT
-WP_ENV=staging  WP_HOME=https://<stg-host>  WP_SITEURL=${WP_HOME}/wp
+WP_ENV=<staging|production>  WP_HOME=https://<site-host>  WP_SITEURL=${WP_HOME}/wp
 AUTH_KEY  SECURE_AUTH_KEY  LOGGED_IN_KEY  NONCE_KEY
 AUTH_SALT  SECURE_AUTH_SALT  LOGGED_IN_SALT  NONCE_SALT
 ```
@@ -332,10 +339,12 @@ sudo /usr/local/sbin/amazon-staging-provision
 The re-run renders HTTP-to-HTTPS redirects and TLS listeners only after all three certificate pairs
 exist. `nginx -t` must pass before the distribution origin policy changes.
 
-### 4. Keep the staging-only nginx values manual
+### 4. Keep the environment-only nginx values manual
 
-Supply the driver-approved CSP host list and embed password on the instance. Their contents never
-enter Terraform or Git.
+Supply the driver-approved CSP host list — and, on staging only, the embed password — on the
+instance. Their contents never enter Terraform or Git. **Production has no embed htpasswd
+gate** (the provisioner leaves the `$rsvp_auth` map default at `off`); skip the htpasswd steps
+there.
 
 ```bash
 sudoedit /etc/nginx/snippets/rsvp-staging-csp.conf
@@ -361,6 +370,33 @@ Cutover is an origin change on the existing distributions, not a DNS change:
 
 Rollback is the same operation in reverse: restore each recorded old origin. Terraform does not
 manage or modify any distribution.
+
+### New distributions, certificates, and DNS (production cutover, 2026-09-01)
+
+When cutting over with fresh distributions instead of an origin flip, the certificate dance has
+sharp edges — all learned the hard way:
+
+1. **A domain attaches to one distribution at a time**, and the claim lives with the
+   distribution's **attached certificate**, not its custom-domain toggles. "Already associated
+   with a different resource" means an old distribution still holds an attached cert carrying
+   that SAN — detach the cert there (or delete the distribution) to release it. An attached
+   cert also cannot be deleted.
+2. **Distribution certificates are Lightsail-created, us-east-1 only.** CLI checks and
+   attaches need `--region us-east-1` explicitly; without it the cert "does not exist".
+   The console's "Attach certificate" picker lags several minutes behind reality — the CLI
+   attach by exact `certificateName` is authoritative:
+   `aws lightsail attach-certificate-to-distribution --region us-east-1 --distribution-name <d> --certificate-name <c>`.
+3. **Match the SAN list to the provisioner's server names** before attaching — a cert carrying
+   legacy-domain SANs routes those hosts to whatever server block is default. The five
+   production names are the ENV-DELTAS rows.
+4. **Recreate under a new name** if a cert was just deleted — a reused name can hit ghost
+   state.
+5. **The distribution caches what it sees at attach time.** After flipping site state (for
+   example the coming-soon toggle), reset the distribution cache or visitors keep the old
+   pages.
+
+DNS records point at the distribution domains and stay outside Terraform; record the previous
+values before switching, and rollback is restoring them.
 
 ## Staging verification
 
