@@ -26,6 +26,12 @@ web/app/themes/cia-amazon-fyc-ampas-2026.1/scripts/deploy-theme.sh staging
 git push origin deploy/staging-<timestamp>
 ```
 
+Staging builds from `develop`. **Production builds from `master`** (since 2026-09-09
+`master` is the production source pointer; the driver resets it to the release commit
+first, see `_docs/process/README.md` "Branch model, releases and hotfixes"). Check out
+`master` before running `deploy-theme.sh production`; the deploy commit records the source
+branch, so a production deploy branch that names `develop` is wrong.
+
 Use the Guilds theme path for Guilds. The script returns to the source branch and prints the exact
 push command. It warns before continuing with a dirty source tree and stops without a new branch
 when the built `dist/` matches the newest remote deploy branch.
@@ -111,8 +117,11 @@ commit that reaches outside it. Everything else in the site repo — ACF field g
 
 ```bash
 cd /var/www/html/amazon-studios-<site>
-git pull --ff-only origin develop
+git pull --ff-only origin develop   # staging
+git pull --ff-only origin master    # production
 ```
+
+Staging checkouts track `develop`; production checkouts track `master` (moved 2026-09-09).
 
 A change that lands PHP or ACF alongside built assets needs BOTH steps, or the site runs
 mismatched halves — a new ACF field stays invisible in WP admin until the checkout pull

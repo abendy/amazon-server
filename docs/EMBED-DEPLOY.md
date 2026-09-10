@@ -6,7 +6,8 @@ defers the server-side apply to this runbook. First real production apply: 2026-
 
 ## Build and push (operator machine)
 
-From the rsvp repository on `develop`:
+From the rsvp repository on `master` (the production source pointer since 2026-09-09; the
+driver resets it to the release commit first). Staging embed builds come from `develop`.
 
 ```bash
 ./scripts/deploy-embed.sh consideramazon production external-css
