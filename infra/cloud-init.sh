@@ -329,6 +329,28 @@ render_base_config() {
   rm -f "$rendered_config"
 }
 
+# The per-site log directories sit outside the stock nginx logrotate glob
+# (/var/log/nginx/*.log); without this rule they grow until the disk fills
+# (production, 2026-09-10: 65G of error logs in nine days).
+write_logrotate() {
+  cat > /etc/logrotate.d/nginx-sites <<'LOGROTATE'
+/var/log/nginx/*/*.log {
+	daily
+	missingok
+	rotate 14
+	compress
+	delaycompress
+	notifempty
+	create 0640 www-data adm
+	sharedscripts
+	postrotate
+		invoke-rc.d nginx rotate >/dev/null 2>&1
+	endscript
+}
+LOGROTATE
+  chmod 0644 /etc/logrotate.d/nginx-sites
+}
+
 render_rsvp_static_include() {
   local rsvp_static_include="$NGINX_ROOT/includes/rsvp-static.conf"
 
@@ -596,7 +618,7 @@ server {
 
   access_log ${SITE_ACCESS_LOG} main;
   access_log ${SITE_SCRIPTS_LOG} scripts;
-  error_log ${SITE_ERROR_LOG} debug;
+  error_log ${SITE_ERROR_LOG} warn;
 
   include includes/security.conf;
   include includes/static.conf;
@@ -627,7 +649,7 @@ server {
 
   access_log ${SITE_ACCESS_LOG} main;
   access_log ${SITE_SCRIPTS_LOG} scripts;
-  error_log ${SITE_ERROR_LOG} debug;
+  error_log ${SITE_ERROR_LOG} warn;
 
   include includes/security.conf;
   include includes/static.conf;
@@ -642,7 +664,7 @@ server {
   server_name ${SITE_SERVER_NAME};
 
   access_log ${SITE_ACCESS_LOG} main;
-  error_log ${SITE_ERROR_LOG} debug;
+  error_log ${SITE_ERROR_LOG} warn;
 
   location / {
     return 301 https://$host$request_uri;
@@ -741,6 +763,7 @@ render_wordpress_server() {
 }
 
 render_base_config
+write_logrotate
 render_rsvp_static_include
 write_templates
 
