@@ -21,6 +21,22 @@ credentials. The paths below describe provisioner-owned locations only.
 | Guilds | staging | `stg.amazonmgmstudiosguilds.com` | HTTP `80` redirects to TLS `443`; certificate is provisioner-owned | `/var/www/html/amazon-studios-guilds/web` | Not applicable | provisioner-owned modern Guilds WP pool | Off | provisioner-owned Guilds log root |
 | Guilds | production | `_` in the current coming-soon block; final host binding is not present in the deployed reference | HTTP `80` coming-soon placeholder until R4 supplies the TLS listener | `/var/www/html/amazon-studios-guilds/web` | Not applicable | provisioner-owned modern Guilds WP pool | Off | provisioner-owned Guilds log root |
 
+## Site logs, rotation, and media upload limits
+
+Provisioner-owned (`infra/cloud-init.sh`), driver-ratified 2026-09-10 after production filled
+its disk with debug-level nginx error logs.
+
+| Environment | WordPress `error_log` level | RSVP `error_log` level | `/var/log/nginx/*/*.log` rotation |
+|---|---|---|---|
+| local | shared tree (`warn`) | shared tree (`warn`) | none (docker) |
+| staging | `debug` | `warn` | daily or at 1G, keep 3, compressed |
+| production | `warn` | `warn` | daily or at 4G, keep 14, compressed |
+
+Upload limits are the same on every provisioned instance: PHP-FPM pools `upload_max_filesize`
+and `post_max_size` 512M, `max_execution_time` and `max_input_time` 600s; nginx
+`client_max_body_size` 600m, `client_body_timeout` 300s, `fastcgi_read_timeout` 600s for
+WordPress. Trailers upload through WP Media, so these must hold on every re-provision.
+
 ## Local database publishing
 
 The site Compose files publish MariaDB on `0.0.0.0` (same as today's RSVP `3307`). There is no

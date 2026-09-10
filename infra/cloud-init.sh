@@ -90,7 +90,17 @@ STAGING_DB_ENV_FILE='/root/amazon-staging/db.env'
 # differ between environments. The CSP snippet path and db.env handoff path
 # are environment-invariant.
 AMAZON_SERVER_ENVIRONMENT="$(cat /etc/amazon-server.env 2>/dev/null || echo staging)"
+
+# nginx site error_log level and rotation. Staging keeps debug for
+# diagnosis and trims aggressively; production logs warn and keeps two
+# weeks (production filled its disk with debug logs, 2026-09-10).
+SITE_ERROR_LOG_LEVEL='debug'
+SITE_LOG_ROTATE_KEEP='3'
+SITE_LOG_ROTATE_MAXSIZE='1G'
 if [[ "$AMAZON_SERVER_ENVIRONMENT" == 'production' ]]; then
+  SITE_ERROR_LOG_LEVEL='warn'
+  SITE_LOG_ROTATE_KEEP='14'
+  SITE_LOG_ROTATE_MAXSIZE='4G'
   STAGING_RSVP_SERVER_NAME='rsvp.amazonmgmstudiosawards.com'
   STAGING_RSVP_HTTP_CI_ENV='production'
 
@@ -165,9 +175,10 @@ export STAGING_GUILDS_SCRIPTS_LOG STAGING_GUILDS_ERROR_LOG STAGING_GUILDS_FRAME_
 export STAGING_GUILDS_ASSET_EXPIRES STAGING_GUILDS_ASSET_CACHE_CONTROL
 export STAGING_GUILDS_CSS_EXPIRES STAGING_GUILDS_CSS_CACHE_CONTROL
 export STAGING_GUILDS_CSS_PRAGMA STAGING_GUILDS_TLS_CERT STAGING_GUILDS_TLS_KEY
+export SITE_ERROR_LOG_LEVEL
 
 STAGING_TEMPLATE_VARS="\${STAGING_RSVP_SERVER_NAME} \${STAGING_RSVP_HTTP_CI_ENV} \${STAGING_RSVP_DOCROOT} \${STAGING_RSVP_PUBLIC_DOCROOT} \${STAGING_RSVP_EMBED_DOCROOT} \${STAGING_RSVP_FPM_SOCKET} \${STAGING_RSVP_AUTH_FILE} \${STAGING_RSVP_ACCESS_LOG} \${STAGING_RSVP_SCRIPTS_LOG} \${STAGING_RSVP_ERROR_LOG} \${STAGING_RSVP_EMBED_ACCESS_LOG} \${STAGING_RSVP_FRAME_OPTIONS} \${STAGING_RSVP_ASSET_EXPIRES} \${STAGING_RSVP_ASSET_CACHE_CONTROL} \${STAGING_RSVP_CSS_EXPIRES} \${STAGING_RSVP_CSS_CACHE_CONTROL} \${STAGING_RSVP_CSS_PRAGMA} \${STAGING_RSVP_LEGACY_CSS_EXPIRES} \${STAGING_RSVP_LEGACY_CSS_CACHE_CONTROL} \${STAGING_RSVP_LEGACY_CSS_PRAGMA} \${STAGING_RSVP_EMBED_CORS_ORIGIN} \${STAGING_RSVP_EMBED_CORS_METHODS} \${STAGING_RSVP_EMBED_CORS_HEADERS} \${STAGING_RSVP_EMBED_CACHE_EXPIRES} \${STAGING_RSVP_EMBED_CACHE_CONTROL} \${STAGING_RSVP_TLS_CERT} \${STAGING_RSVP_TLS_KEY} \${STAGING_ACME_DOCROOT} \${STAGING_CSP_INCLUDE}"
-SITE_TEMPLATE_VARS="\${SITE_SERVER_NAME} \${SITE_DOCROOT} \${SITE_FPM_SOCKET} \${SITE_ACCESS_LOG} \${SITE_SCRIPTS_LOG} \${SITE_ERROR_LOG} \${SITE_FRAME_OPTIONS} \${SITE_ASSET_EXPIRES} \${SITE_ASSET_CACHE_CONTROL} \${SITE_CSS_EXPIRES} \${SITE_CSS_CACHE_CONTROL} \${SITE_CSS_PRAGMA} \${SITE_TLS_CERT} \${SITE_TLS_KEY}"
+SITE_TEMPLATE_VARS="\${SITE_SERVER_NAME} \${SITE_DOCROOT} \${SITE_FPM_SOCKET} \${SITE_ACCESS_LOG} \${SITE_SCRIPTS_LOG} \${SITE_ERROR_LOG} \${SITE_ERROR_LOG_LEVEL} \${SITE_FRAME_OPTIONS} \${SITE_ASSET_EXPIRES} \${SITE_ASSET_CACHE_CONTROL} \${SITE_CSS_EXPIRES} \${SITE_CSS_CACHE_CONTROL} \${SITE_CSS_PRAGMA} \${SITE_TLS_CERT} \${SITE_TLS_KEY}"
 
 export DEBIAN_FRONTEND='noninteractive'
 export PATH='/usr/sbin:/usr/bin:/sbin:/bin'
@@ -259,6 +270,8 @@ php_admin_flag[log_errors] = on
 php_admin_value[error_log] = ${error_log}
 php_admin_value[upload_max_filesize] = 512M
 php_admin_value[post_max_size] = 512M
+php_admin_value[max_execution_time] = 600
+php_admin_value[max_input_time] = 600
 POOL
 }
 
@@ -331,13 +344,15 @@ render_base_config() {
 
 # The per-site log directories sit outside the stock nginx logrotate glob
 # (/var/log/nginx/*.log); without this rule they grow until the disk fills
-# (production, 2026-09-10: 65G of error logs in nine days).
+# (production, 2026-09-10: 65G of error logs in nine days). maxsize lets a
+# debug-level staging log rotate before its daily slot when it spikes.
 write_logrotate() {
-  cat > /etc/logrotate.d/nginx-sites <<'LOGROTATE'
+  cat > /etc/logrotate.d/nginx-sites <<LOGROTATE
 /var/log/nginx/*/*.log {
 	daily
+	maxsize ${SITE_LOG_ROTATE_MAXSIZE}
 	missingok
-	rotate 14
+	rotate ${SITE_LOG_ROTATE_KEEP}
 	compress
 	delaycompress
 	notifempty
@@ -618,7 +633,7 @@ server {
 
   access_log ${SITE_ACCESS_LOG} main;
   access_log ${SITE_SCRIPTS_LOG} scripts;
-  error_log ${SITE_ERROR_LOG} warn;
+  error_log ${SITE_ERROR_LOG} ${SITE_ERROR_LOG_LEVEL};
 
   include includes/security.conf;
   include includes/static.conf;
@@ -649,7 +664,7 @@ server {
 
   access_log ${SITE_ACCESS_LOG} main;
   access_log ${SITE_SCRIPTS_LOG} scripts;
-  error_log ${SITE_ERROR_LOG} warn;
+  error_log ${SITE_ERROR_LOG} ${SITE_ERROR_LOG_LEVEL};
 
   include includes/security.conf;
   include includes/static.conf;
@@ -664,7 +679,7 @@ server {
   server_name ${SITE_SERVER_NAME};
 
   access_log ${SITE_ACCESS_LOG} main;
-  error_log ${SITE_ERROR_LOG} warn;
+  error_log ${SITE_ERROR_LOG} ${SITE_ERROR_LOG_LEVEL};
 
   location / {
     return 301 https://$host$request_uri;
