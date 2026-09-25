@@ -73,5 +73,5 @@ driver-owned apply sequence. Terraform state, plan files, tfvars, and crash logs
 ## Provenance
 
 Authored under the RSVP restructure track (RS-05+), translated from the deployed
-instance configs snapshotted in the `_nginx` reference repo (to be archived after
-the R5 cutover). Tracker: [abendy/amazon-docs](https://github.com/abendy/amazon-docs).
+instance configs snapshotted in the `_nginx` reference repo, archived on 2026-09-25 as
+`_files/_nginx-legacy-2026-09-25.zip` at the workspace root with its local git history. Tracker: [abendy/amazon-docs](https://github.com/abendy/amazon-docs).
