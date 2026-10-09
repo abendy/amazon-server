@@ -8,10 +8,17 @@ on the server. GitHub Actions remains an advisory merge gate and is not part of 
 
 Each deploy branch contains only the theme's real `web/app/themes/*2026.1/dist/` files:
 
-- `dist/typescript/index.js`
-- `dist/typescript/index.css`
-- `dist/scss/style.css`
-- `dist/Preview.[hash].js`
+- `dist/.vite/manifest.json`: names the hashed script entry and the CSS of its up-front chunks
+- `dist/typescript/index-[hash].js`: the script entry, loaded with no version query
+- `dist/typescript/index.css` and `dist/scss/style.css`: loaded with a file-time version query
+- `dist/Preview.[hash].js`: chunks; `vendor` and `pdf` are among them, and pdf.js loads only on
+  pages that show a PDF
+- `dist/[name]-[hash].css`: chunk stylesheets
+- `dist/pdf.worker.min.js` and the fonts and images the CSS references
+
+`functions/styles-scripts.php` reads the manifest. The page and the chunks must load the entry by
+one URL, so it carries no version query; its hash changes with its content. A `dist/` without a
+manifest still loads the old fixed `typescript/index.js`.
 
 The deploy commit records the source branch, source commit, and UTC build time. The mutable remote
 ref `deploy/live/<environment>` points at the deploy commit last applied to that environment. It is
@@ -108,6 +115,14 @@ MariaDB container environment. Hosted applies do not use this fallback.
 
 Page-cache plugins are outside this wrapper's scope. `THEME_DEPLOY_PAGE_CACHE_PURGE_SCRIPT` is a
 reserved hook name for the separate page-cache audit; the current apply path does not invoke it.
+
+## First deploy of the hashed entry
+
+The deploy that first ships `dist/.vite/manifest.json` (AMPAS `3fd7f4f5`, Guilds `f78325cc`, landed
+2026-10-09) changes PHP and `dist/` together. Pull the instance checkout **before** applying the
+deploy branch: new PHP with the old `dist/` falls back to `index.js`, but old PHP with the new
+`dist/` asks for an `index.js` that no longer exists and the site loads no script. Later deploys
+need the pull only when PHP or ACF changed.
 
 ## What a dist deploy does NOT carry
 
