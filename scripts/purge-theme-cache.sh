@@ -66,11 +66,11 @@ site_defaults() {
     case "$1" in
         ampas)
             DEFAULT_REPO_DIR="$DEFAULT_REPO_ROOT/amazon-studios-ampas"
-            DEFAULT_DB_CONTAINER='ampas-mariadb'
+            DEFAULT_DB_CONTAINER='ampas-mysql'
             ;;
         guilds)
             DEFAULT_REPO_DIR="$DEFAULT_REPO_ROOT/amazon-studios-guilds"
-            DEFAULT_DB_CONTAINER='guilds-mariadb'
+            DEFAULT_DB_CONTAINER='guilds-mysql'
             ;;
         *)
             fail "Theme must be ampas or guilds: $1"
@@ -239,10 +239,10 @@ resolve_arguments() {
 
 resolve_arguments "$@"
 
-db_host="$(database_value DB_HOST MARIADB_HOST)"
-db_name="$(database_value DB_NAME MARIADB_DATABASE)"
-db_user="$(database_value DB_USER MARIADB_USER)"
-db_password="$(database_value DB_PASSWORD MARIADB_PASSWORD)"
+db_host="$(database_value DB_HOST MYSQL_HOST)"
+db_name="$(database_value DB_NAME MYSQL_DATABASE)"
+db_user="$(database_value DB_USER MYSQL_USER)"
+db_password="$(database_value DB_PASSWORD MYSQL_PASSWORD)"
 db_port="$(config_value DB_PORT "$config_root" || printf '3306')"
 db_prefix="$(config_value DB_PREFIX "$config_root" || printf 'wp_')"
 

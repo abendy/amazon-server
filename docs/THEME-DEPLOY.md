@@ -111,7 +111,7 @@ hatch for an exotic host command.
 
 The local Docker harness's scratch checkout has no site `.env` because it is gitignored. Its
 scratch proof may set `THEME_DEPLOY_LOCAL_DOCKER=1`; the wrapper then reads the running site's
-MariaDB container environment. Hosted applies do not use this fallback.
+MySQL container environment. Hosted applies do not use this fallback.
 
 Page-cache plugins are outside this wrapper's scope. `THEME_DEPLOY_PAGE_CACHE_PURGE_SCRIPT` is a
 reserved hook name for the separate page-cache audit; the current apply path does not invoke it.

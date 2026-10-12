@@ -1,0 +1,18 @@
+# Local MySQL settings that match the staging and production databases.
+#
+# Staging and production run managed MySQL 8.0.45 for all three sites (rsvp,
+# AMPAS, Guilds). These are the server values measured there that differ from
+# the mysql:8.0.45 image's defaults. Each site's local database container
+# mounts this file; keep it in step with the servers, never ahead of them.
+
+[mysqld]
+sql_mode                      = NO_ENGINE_SUBSTITUTION
+character_set_server          = utf8mb4
+collation_server              = utf8mb4_0900_ai_ci
+default_time_zone             = '+00:00'
+default_authentication_plugin = mysql_native_password
+max_allowed_packet            = 64M
+local_infile                  = ON
+
+[client]
+default_character_set         = utf8mb4

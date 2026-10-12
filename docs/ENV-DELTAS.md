@@ -39,12 +39,12 @@ WordPress. Trailers upload through WP Media, so these must hold on every re-prov
 
 ## Local database publishing
 
-The site Compose files publish MariaDB on `0.0.0.0` (same as today's RSVP `3307`). There is no
+The site Compose files publish MySQL on `0.0.0.0` (same as today's RSVP `3307`). There is no
 bind-IP setting. Tailscale and firewall state are driver-owned machine settings. WordPress
 accepts `host:port` in `DB_HOST`; RSVP's mysqli driver does not, so the laptop sets `DB_HOST`
 and `DB_PORT` separately.
 
-| Site | Environment | Bind | Published MariaDB port | Laptop values |
+| Site | Environment | Bind | Published MySQL port | Laptop values |
 |---|---|---|---:|---|
 | RSVP | local | `0.0.0.0` | `3307` | `DB_HOST=nigiri-san.taila71bd7.ts.net` and `DB_PORT=3307` |
 | AMPAS | local | `0.0.0.0` | `3308` | `DB_HOST=nigiri-san.taila71bd7.ts.net:3308` |

@@ -27,7 +27,7 @@ repo — they are provisioner-owned and listed as env deltas.
 ## Local Docker stack
 
 The local harness has one nginx container and one shared Docker network. The site repositories
-provide the PHP-FPM and MariaDB containers; this repository provides nginx and mounts the three
+provide the PHP-FPM and MySQL containers; this repository provides nginx and mounts the three
 site docroots read-only.
 
 Clone these repositories as siblings:
@@ -55,9 +55,14 @@ The network-create command is safe to repeat only after checking whether the net
 exists. The final command publishes port 80 and loads `localhost`, `ampas.local`, and
 `guilds.local`. Use `curl --resolve <name>:80:127.0.0.1` for host-routed checks.
 
-Each WordPress MariaDB service uses a new named volume and imports its matching `_db/` dump on
-first boot. Existing `ampas_mysql_data` and `guilds_mysql_data` volumes are not referenced by
-these Compose files and must not be removed.
+Each site's database runs `mysql:8.0.45`, the staging and production engine, and mounts
+[`mysql/server-parity.cnf`](mysql/server-parity.cnf) for the servers' `sql_mode`, character set,
+collation and time zone. Keep that file in step with the servers, never ahead of them.
+
+Each WordPress MySQL service uses its own named volume (`ampas_mysql8_data`,
+`guilds_mysql8_data`) and imports its matching `_db/` dump on first boot. The older
+`*_mariadb_data` and `*_mysql_data` volumes are not referenced by these Compose files and must
+not be removed.
 
 The local stack is a development harness only. It does not deploy or change the nginx serving
 configuration on the mini or any hosted environment.

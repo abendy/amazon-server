@@ -10,7 +10,8 @@
 #   1. Backs up the three local databases to _db/ (timestamped).
 #   2. Dumps each staging WP database through an SSH tunnel (the instance
 #      has no dump tools; the Lightsail DB endpoint is only reachable
-#      from it) using a disposable mariadb container as the client.
+#      from it) using a disposable MySQL container, at the servers' own
+#      version, as the client.
 #      The dump lands in _db/ timestamped and replaces the site's
 #      re-seed copy (<name>-db.sql), then imports into the live local
 #      container.
@@ -33,7 +34,7 @@ DB_DIR="$WORKSPACE/_db"
 STAGING_HOST="${STAGING_HOST:-ubuntu@32.188.183.9}"
 STAGING_SSH_OPTS="${STAGING_SSH_OPTS:-}"
 TUNNEL_PORT="${TUNNEL_PORT:-33061}"
-MARIADB_IMAGE="mariadb:12.3.2"
+MYSQL_IMAGE="mysql:8.0.45"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
 do_backup=1 do_db=1 do_uploads=1
@@ -53,7 +54,7 @@ done
 [ ${#sites[@]} -eq 0 ] && sites=(ampas guilds)
 
 # site -> local container, dump basename, checkout, staging path
-container_for() { case "$1" in ampas) echo ampas-mariadb ;; guilds) echo guilds-mariadb ;; rsvp) echo rsvp-mysql ;; esac; }
+container_for() { case "$1" in ampas) echo ampas-mysql ;; guilds) echo guilds-mysql ;; rsvp) echo rsvp-mysql ;; esac; }
 dumpname_for() { case "$1" in ampas) echo amazon-studios-ampas-db ;; guilds) echo amazon-studios-guilds-db ;; rsvp) echo rsvp ;; esac; }
 remote_root_for() { case "$1" in ampas) echo /var/www/html/amazon-studios-ampas ;; guilds) echo /var/www/html/amazon-studios-guilds ;; esac; }
 local_root_for() { case "$1" in ampas) echo "$WORKSPACE/ampas" ;; guilds) echo "$WORKSPACE/guilds" ;; esac; }
@@ -68,7 +69,7 @@ backup_local() {
     out="$DB_DIR/${dump}_local-backup--${STAMP}.sql"
     echo "backup: $site -> ${out#"$WORKSPACE"/}"
     docker exec "$container" sh -c \
-        'exec mariadb-dump --single-transaction -u"$MARIADB_USER" -p"$MARIADB_PASSWORD" "$MARIADB_DATABASE"' \
+        'exec mysqldump --single-transaction --no-tablespaces --set-gtid-purged=OFF -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' \
         > "$out"
 }
 
@@ -106,8 +107,8 @@ sync_db() {
     }
     trap close_tunnel RETURN
 
-    docker run --rm -e DUMP_PASSWORD="$DB_PASSWORD" "$MARIADB_IMAGE" sh -c \
-        "exec mariadb-dump --single-transaction --skip-ssl \
+    docker run --rm -e DUMP_PASSWORD="$DB_PASSWORD" "$MYSQL_IMAGE" sh -c \
+        "exec mysqldump --single-transaction --no-tablespaces --set-gtid-purged=OFF --ssl-mode=DISABLED \
             -h host.docker.internal -P ${port} -u '$DB_USER' -p\"\$DUMP_PASSWORD\" '$DB_NAME'" \
         > "$fetched"
     close_tunnel
@@ -115,7 +116,7 @@ sync_db() {
     echo "import: $site local database <- ${fetched#"$WORKSPACE"/}"
     cp "$fetched" "$DB_DIR/${dump}.sql"
     docker exec -i "$container" sh -c \
-        'exec mariadb -u"$MARIADB_USER" -p"$MARIADB_PASSWORD" "$MARIADB_DATABASE"' \
+        'exec mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' \
         < "$fetched"
 }
 
