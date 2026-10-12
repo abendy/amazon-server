@@ -73,6 +73,9 @@ The apply script:
    git push --force origin <deploy-commit>:refs/heads/deploy/live/<environment>
    ```
 
+   Agent shells cannot run it: the deny hook blocks force pushes. The agent hands the driver
+   the printed command, then confirms `deploy-theme.sh status <environment>` reads `CURRENT`.
+
 The server checkout needs Git fetch access to the theme repository. The marker write belongs to
 the operator clone (#205 ruling). The script uses the deployed paths from `_docs/WORKSPACE.md`:
 
