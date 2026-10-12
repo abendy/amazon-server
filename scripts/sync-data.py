@@ -2,14 +2,24 @@
 """Copy site data down from production or staging to the mini and/or staging.
 
     sync-data.py --from production --to local [staging] [--sites ampas guilds rsvp]
-                 [--no-db] [--no-uploads] [--no-backup] [--small] [--plan] [--yes]
+                 [--attendees none|masked|real] [--no-db] [--no-uploads] [--no-backup]
+                 [--small] [--plan] [--yes]
 
 For each site, in order:
   1. Backs up each target database to _db/ (timestamped, full), unless --no-backup.
   2. Dumps the source database through an SSH tunnel to the instance (the managed database is
      only reachable from it) with a disposable MySQL 8.0.45 client container, the servers' own
-     version. RSVP copies every table's structure but no attendee data: no rows from attendees
-     and cancellations (personal data), nor from ci_sessions and login_attempts (transient).
+     version. RSVP copies every table's structure; its rows depend on --attendees:
+       none (default)  no rows from attendees and cancellations.
+       masked          attendee rows with names, emails, guest names and stored messages
+                       replaced inside the source query, so real values never reach disk or
+                       the target. Each email maps to a-<hash>@example.invalid, the hash keyed
+                       per run, so one person keeps one address within a copy.
+       real            real attendee rows. The mini only, after warnings and two prompts.
+     Outside real, the staff mailboxes (screenings.rsvp_email, cities.rsvp_email,
+     movies.reply_to_email) are masked the same way (staff-<hash>@example.invalid). Admin users
+     keep their real addresses so they can log in. ci_sessions and login_attempts never copy
+     rows.
   3. Replaces each target database with the dump. Every target table is dropped first, so the
      target ends as an exact copy. A local WordPress import also becomes the site's re-seed copy
      (_db/<name>.sql). WordPress targets then drop the titles-catalog transient.
@@ -33,8 +43,10 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import decimal
 import json
 import os
+import secrets
 import shlex
 import shutil
 import socket
@@ -64,8 +76,21 @@ AWS_REGION = "us-west-2"
 AWS_PROFILE = os.environ.get("SYNC_AWS_PROFILE", "amazon-lightsail-staging")
 MAX_SIZE = os.environ.get("SYNC_MAX_SIZE", "5m")
 
-# RSVP tables whose rows never leave the source: attendee personal data, then transient state.
-RSVP_STRUCTURE_ONLY = ["attendees", "cancellations", "ci_sessions", "login_attempts"]
+# RSVP rows that never copy: transient state.
+RSVP_TRANSIENT = ["ci_sessions", "login_attempts"]
+# Personal data, column by column, and how each column is masked.
+ATTENDEE_MASKS = {
+    "attendees": {"first_name": "guest", "last_name": "row_id", "email": "attendee_email",
+                  "guest_names": "blank", "emailMsg": "blank"},
+    "cancellations": {"email": "attendee_email", "emailMsg": "blank"},
+}
+# Staff and publicist mailboxes: email-only RSVP addresses and per-movie reply-to.
+STAFF_MASKS = {
+    "screenings": {"rsvp_email": "staff_email"},
+    "cities": {"rsvp_email": "staff_email"},
+    "movies": {"reply_to_email": "staff_email"},
+}
+INSERT_BATCH = 500
 TITLES_CACHE_SQL = (
     "DELETE FROM wp_options WHERE option_name LIKE '%transient%vm_titles_catalog%'"
 )
@@ -280,19 +305,128 @@ def write_file(path: Path, fill: Callable[[IO[bytes]], None]) -> None:
         partial.unlink(missing_ok=True)
 
 
-def dump_source(remote: Remote, site: Site, out: Path) -> None:
-    """Dump a site's source database, holding back RSVP's structure-only rows."""
+def mask_expression(kind: str, column: str, key: str) -> str:
+    """Return the SQL that replaces one column's value with its mask, keeping NULLs."""
+    col = f"`{column}`"
+    hashed = f"LEFT(SHA2(CONCAT('{key}', LOWER(TRIM({col}))), 256), 12)"
+    masks = {
+        "attendee_email": f"CONCAT('a-', {hashed}, '@example.invalid')",
+        "staff_email": f"CONCAT('staff-', {hashed}, '@example.invalid')",
+        "guest": "'Guest'",
+        "row_id": "CAST(`id` AS CHAR)",
+        "blank": "''",
+    }
+    if kind.endswith("_email"):
+        return f"IF(NULLIF(TRIM({col}), '') IS NULL, {col}, {masks[kind]})"
+    return f"IF({col} IS NULL, NULL, {masks[kind]})"
+
+
+def sql_literal(value: object) -> str:
+    """Return a MySQL literal for one JSON-decoded value."""
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, (int, decimal.Decimal)):
+        return str(value)
+    if not isinstance(value, str):
+        raise RuntimeError(f"cannot copy a {type(value).__name__} value")
+    if value.startswith("base64:type"):
+        raise RuntimeError("binary columns cannot go through the masked copy")
+    escaped = (value.replace("\\", "\\\\").replace("'", "\\'").replace("\0", "\\0")
+               .replace("\n", "\\n").replace("\r", "\\r").replace("\x1a", "\\Z"))
+    return f"'{escaped}'"
+
+
+def export_masked(
+    creds: Creds, port: int, table: str, masks: Dict[str, str], key: str, handle: IO[bytes],
+) -> int:
+    """Write a table's rows as INSERTs, masked inside the source query; return the row count."""
+    def query(sql: str) -> List[str]:
+        with tempfile.TemporaryFile() as taken:
+            tunnel_client(["mysql", "-N", "--raw", "--default-character-set=utf8mb4",
+                           "-e", sql], creds, port, stdout=taken)
+            taken.seek(0)
+            return taken.read().decode("utf-8").splitlines()
+
+    columns = query("SELECT column_name FROM information_schema.columns WHERE table_schema ="
+                    f" DATABASE() AND table_name = '{table}' ORDER BY ordinal_position")
+    unknown = sorted(set(masks) - set(columns))
+    if unknown:
+        raise RuntimeError(f"{table}: masked columns not found: {unknown}")
+    selects = [mask_expression(masks[c], c, key) if c in masks else f"`{c}`" for c in columns]
+    rows = query(f"SELECT JSON_ARRAY({', '.join(selects)}) FROM `{table}`")
+    names = ", ".join(f"`{c}`" for c in columns)
+    for start in range(0, len(rows), INSERT_BATCH):
+        values = []
+        for line in rows[start:start + INSERT_BATCH]:
+            fields = json.loads(line, parse_float=decimal.Decimal)
+            values.append("(" + ", ".join(sql_literal(v) for v in fields) + ")")
+        rows_sql = ",\n".join(values)
+        handle.write(f"INSERT INTO `{table}` ({names}) VALUES\n{rows_sql};\n".encode("utf-8"))
+    return len(rows)
+
+
+def rsvp_masks(attendees: str) -> Dict[str, Dict[str, str]]:
+    """Return the tables RSVP rewrites through the masked copy, for an attendees mode."""
+    if attendees == "real":
+        return {}
+    if attendees == "masked":
+        return {**STAFF_MASKS, **ATTENDEE_MASKS}
+    return dict(STAFF_MASKS)
+
+
+def rsvp_structure_only(attendees: str) -> List[str]:
+    """Return the RSVP tables that copy their structure and no rows."""
+    return RSVP_TRANSIENT + ([] if attendees in ("masked", "real") else list(ATTENDEE_MASKS))
+
+
+def dump_source(remote: Remote, site: Site, out: Path, attendees: str) -> None:
+    """Dump a site's source database; RSVP holds back or masks rows per the attendees mode."""
     creds = remote_creds(remote, site)
     with tunnel(remote, creds) as port:
         def fill(handle: IO[bytes]) -> None:
             if site.wordpress:
                 tunnel_client(["mysqldump", *DUMP_FLAGS], creds, port, stdout=handle)
                 return
-            ignore = [f"--ignore-table={creds.name}.{table}" for table in RSVP_STRUCTURE_ONLY]
+            masks = rsvp_masks(attendees)
+            apart = rsvp_structure_only(attendees) + list(masks)
+            ignore = [f"--ignore-table={creds.name}.{table}" for table in apart]
             tunnel_client(["mysqldump", *DUMP_FLAGS, *ignore], creds, port, stdout=handle)
             tunnel_client(["mysqldump", *DUMP_FLAGS, "--no-data"], creds, port,
-                          tail=RSVP_STRUCTURE_ONLY, stdout=handle)
+                          tail=apart, stdout=handle)
+            if not masks:
+                return
+            key = secrets.token_hex(16)
+            handle.write(b"SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;\n")
+            for table, columns in masks.items():
+                count = export_masked(creds, port, table, columns, key, handle)
+                log(f"        {site.name}: {table} {count} rows, masked {', '.join(columns)}")
+            handle.write(b"SET FOREIGN_KEY_CHECKS=1;\n")
         write_file(out, fill)
+
+
+REAL_WARNING = """
+  WARNING: --attendees real copies REAL attendee names, email addresses and guest names
+  from {source} onto the mini.
+
+  - Anything on the mini that sends RSVP mail from this copy can reach real people.
+  - RSVP's mail guard sends non-production mail to dev@cia-adv.com, but it treats an
+    unknown environment as production and sends for real.
+  - The dump in _db/ holds the personal data. Delete it when you are done.
+"""
+
+
+def confirm_real(source: str) -> None:
+    """Warn, then ask twice before real attendee data is copied; exit on anything else."""
+    if not sys.stdin.isatty():
+        raise SystemExit("sync-data: --attendees real needs an interactive terminal")
+    print(REAL_WARNING.format(source=source), file=sys.stderr, flush=True)
+    if input("Type 'real attendees' to continue: ").strip() != "real attendees":
+        raise SystemExit("sync-data: stopped, nothing ran")
+    print("\n  Are you sure? Real people can be emailed from this copy.", file=sys.stderr)
+    if input("Type 'yes, mini only' to copy real attendee data: ").strip() != "yes, mini only":
+        raise SystemExit("sync-data: stopped, nothing ran")
 
 
 def backup_target(target: str, staging: Optional[Remote], site: Site, out: Path) -> None:
@@ -413,7 +547,8 @@ def build_steps(
     for name in args.sites:
         site = SITES[name]
         if args.db:
-            fetched = DB_DIR / f"{site.dump_name}--{source.env}-{stamp}.sql"
+            pii = "-REAL-PII" if args.attendees == "real" and not site.wordpress else ""
+            fetched = DB_DIR / f"{site.dump_name}--{source.env}-{stamp}{pii}.sql"
             if args.backup:
                 for target in args.to:
                     out = DB_DIR / f"{site.dump_name}_{target}-backup--{stamp}.sql"
@@ -421,10 +556,14 @@ def build_steps(
                         f"backup  {name}: {target} database -> {out.relative_to(WORKSPACE)}",
                         lambda t=target, s=site, o=out: backup_target(t, staging, s, o),
                     ))
-            held = " (no attendee rows)" if not site.wordpress else ""
+            held = "" if site.wordpress else {
+                "none": " (no attendee rows; staff mailboxes masked)",
+                "masked": " (attendees and staff mailboxes masked)",
+                "real": " (REAL attendee data)",
+            }[args.attendees]
             steps.append(Step(
                 f"dump    {name}: {source.env} database{held} -> {fetched.relative_to(WORKSPACE)}",
-                lambda s=site, f=fetched: dump_source(source, s, f),
+                lambda s=site, f=fetched: dump_source(source, s, f, args.attendees),
             ))
             for target in args.to:
                 def replace(t: str = target, s: Site = site, f: Path = fetched) -> None:
@@ -464,6 +603,8 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
                         choices=["production", "staging"])
     parser.add_argument("--to", nargs="+", required=True, choices=["local", "staging"])
     parser.add_argument("--sites", nargs="+", default=list(SITES), choices=list(SITES))
+    parser.add_argument("--attendees", choices=["none", "masked", "real"], default="none",
+                        help="RSVP attendee rows: none (default), masked, or real (mini only)")
     parser.add_argument("--no-db", dest="db", action="store_false")
     parser.add_argument("--no-uploads", dest="uploads", action="store_false")
     parser.add_argument("--no-backup", dest="backup", action="store_false")
@@ -474,6 +615,8 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     args.to = list(dict.fromkeys(args.to))
     if args.source in args.to:
         parser.error(f"--from {args.source} cannot also be a target")
+    if args.attendees == "real" and args.to != ["local"]:
+        parser.error("--attendees real only goes to the mini: use --to local alone")
     if "staging" in args.to and not (args.yes or args.plan):
         parser.error("writing to staging needs --yes (run --plan first)")
     return args
@@ -482,6 +625,8 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 def main(argv: List[str]) -> int:
     """Run the sync."""
     args = parse_args(argv)
+    if args.attendees == "real" and "rsvp" in args.sites and args.db and not args.plan:
+        confirm_real(args.source)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     with contextlib.ExitStack() as stack:
         staging = Remote("staging", STAGING_HOST)
