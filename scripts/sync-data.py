@@ -398,11 +398,14 @@ def dump_source(remote: Remote, site: Site, out: Path, attendees: str) -> None:
             if not masks:
                 return
             key = secrets.token_hex(16)
-            handle.write(b"SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;\n")
+            # As mysqldump does: without NO_AUTO_VALUE_ON_ZERO an inserted id of 0 takes the next
+            # AUTO_INCREMENT value instead (cities.city_id 0 is Los Angeles).
+            handle.write(b"SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;\n"
+                         b"SET @SYNC_OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO';\n")
             for table, columns in masks.items():
                 count = export_masked(creds, port, table, columns, key, handle)
                 log(f"        {site.name}: {table} {count} rows, masked {', '.join(columns)}")
-            handle.write(b"SET FOREIGN_KEY_CHECKS=1;\n")
+            handle.write(b"SET SQL_MODE=@SYNC_OLD_SQL_MODE;\nSET FOREIGN_KEY_CHECKS=1;\n")
         write_file(out, fill)
 
 
