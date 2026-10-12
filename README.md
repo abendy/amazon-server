@@ -64,6 +64,17 @@ Each WordPress MySQL service uses its own named volume (`ampas_mysql8_data`,
 `*_mariadb_data` and `*_mysql_data` volumes are not referenced by these Compose files and must
 not be removed.
 
+### Copying production data down
+
+[`scripts/sync-data.py`](scripts/sync-data.py) copies the databases and uploads from production
+(or staging) to the mini, staging, or both. It backs up every target first, never writes to
+production, and copies RSVP's table structure without attendee rows. Run it with `--plan` to see
+the steps; staging writes need `--yes`.
+
+```bash
+scripts/sync-data.py --from production --to local --plan
+```
+
 The local stack is a development harness only. It does not deploy or change the nginx serving
 configuration on the mini or any hosted environment.
 
