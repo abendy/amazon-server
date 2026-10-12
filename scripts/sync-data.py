@@ -523,7 +523,9 @@ def import_target(target: str, staging: Optional[Remote], site: Site, dump: Path
 
 def rsync(source: str, destination: str, shell: Optional[str], small: bool) -> None:
     """Copy an uploads tree additively, never deleting and never touching .gitkeep."""
-    argv = ["rsync", "-rltz", "--info=progress2", "--exclude", ".gitkeep"]
+    # Folder times are skipped: staging's upload folders belong to www-data, and setting their
+    # times fails for the ssh user while the files themselves copy fine.
+    argv = ["rsync", "-rltz", "--omit-dir-times", "--info=progress2", "--exclude", ".gitkeep"]
     if small:
         argv.append(f"--max-size={MAX_SIZE}")
     if shell:
