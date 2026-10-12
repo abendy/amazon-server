@@ -129,6 +129,16 @@ ssh -i ls-temp-key ubuntu@<static-ip>
 access, append an operator public key to `~ubuntu/.ssh/authorized_keys` over a temporary
 session, then delete the temporary files. Never reuse repo deploy keys for shell access.
 
+Both instances answer to the `amazon-lightsail-staging` AWS profile:
+
+| Instance | Address | Access |
+|---|---|---|
+| `amazon-fyc-staging` | `ssh amazon-fyc-stage` (32.188.183.9) | durable operator key |
+| `amazon-fyc-production` | `ubuntu@100.23.126.114` | no alias or stored key: fetch a temporary pair each session |
+
+The tfstate address for production (184.32.228.99) is stale; do not probe it. Production
+shell access is granted per release by the driver.
+
 ### Recover a failed first boot
 
 When the bootstrap cloned a branch that lacks `infra/` (see ground rule 3),
