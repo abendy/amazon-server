@@ -42,6 +42,8 @@ branch, so a production deploy branch that names `develop` is wrong.
 Use the Guilds theme path for Guilds. The script returns to the source branch and prints the exact
 push command. It warns before continuing with a dirty source tree and stops without a new branch
 when the built `dist/` matches the newest remote deploy branch.
+That stop leaves `dist/` staged in the primary (amazon-docs#319). Unstage it with
+`git reset -q -- <theme path>/dist` before anything else.
 
 The source branch does not track `dist/`. The deploy branch is the durable copy of the build, so
 run the theme build again before local rendering if branch switching leaves the ignored output
