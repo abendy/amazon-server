@@ -64,6 +64,10 @@ Each WordPress MySQL service uses its own named volume (`ampas_mysql8_data`,
 `*_mariadb_data` and `*_mysql_data` volumes are not referenced by these Compose files and must
 not be removed.
 
+WordPress logs in at `/wp/wp-login.php` (Bedrock layout); the root `/wp-login.php` returns 404.
+A database restore can reset the active theme to an old rollback theme. After any restore,
+confirm the 2026.1 themes are active before trusting what the sites show.
+
 ### Copying production data down
 
 [`scripts/sync-data.py`](scripts/sync-data.py) copies the databases and uploads from production

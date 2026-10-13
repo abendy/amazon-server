@@ -129,6 +129,25 @@ ssh -i ls-temp-key ubuntu@<static-ip>
 access, append an operator public key to `~ubuntu/.ssh/authorized_keys` over a temporary
 session, then delete the temporary files. Never reuse repo deploy keys for shell access.
 
+Both instances answer to the `amazon-lightsail-staging` AWS profile:
+
+| Instance | Address | Access |
+|---|---|---|
+| `amazon-fyc-staging` | `ssh amazon-fyc-stage` (32.188.183.9) | durable operator key |
+| `amazon-fyc-production` | `ubuntu@100.23.126.114` | no alias or stored key: fetch a temporary pair each session |
+
+The tfstate address for production (184.32.228.99) is stale; do not probe it. Production
+shell access is granted per release by the driver.
+
+### Apply RSVP migrations on an instance
+
+The instances have no `mysql` client. Apply a migration with PHP and the environment's
+CodeIgniter config in the RSVP checkout (`admin/application/config/<environment>/database.php`):
+define `BASEPATH`, include the config, open `mysqli` with `$db["default"]`, check
+`SHOW COLUMNS ... LIKE` first, then run the `ALTER`. Print only column names and added or
+present status, never config values. Migrations run before the checkout pull (RSVP
+`docs/DEPLOYMENT.md`). Staging migrations are routine; production waits for the driver's go.
+
 ### Recover a failed first boot
 
 When the bootstrap cloned a branch that lacks `infra/` (see ground rule 3),
