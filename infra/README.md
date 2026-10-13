@@ -376,7 +376,42 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-### 5. Flip the existing CDN origins
+### 5. Install the scheduled jobs
+
+cloud-init installs no cron entries, so a new instance runs no scheduled jobs until this step.
+Nothing fails when a job is missing; the work it does just stops.
+
+**RSVP reminders (production only).** The job runs hourly and mails each attendee 20 to 24 hours
+before their screening. A missed hour is harmless; a missing job silently skips every reminder.
+Staging has no reminder job; add one only on the driver's call.
+
+Dry-run first, as the job's user. A dry run sends nothing and writes nothing:
+
+```bash
+sudo -u www-data HTTP_CI_ENV=production /usr/bin/php7.4 \
+  /var/www/html/rsvp/admin/index.php reminders send_reminders dry_run
+```
+
+Then install the job:
+
+```bash
+sudo tee /etc/cron.d/amazon-rsvp-reminders >/dev/null <<'CRON'
+# RSVP reminder emails. Runs as www-data, which owns the RSVP log directory.
+0 * * * * www-data /var/www/html/rsvp/admin/application/scripts/run_reminder.production.sh >/dev/null 2>&1
+CRON
+sudo chmod 644 /etc/cron.d/amazon-rsvp-reminders
+```
+
+The script sets `HTTP_CI_ENV=production`, which is required. The CLI has no FastCGI param, and
+without it the mail guard sends to the non-production recipients instead of attendees (RSVP
+`docs/DEPLOYMENT.md`, "Outgoing mail"). The script finds `php7.4` on cron's PATH; set `PHP_BIN`
+in the cron line to use another binary.
+
+After the next full hour, confirm the job ran: the newest
+`/var/www/html/rsvp/admin/application/logs/reminders-*.log` holds an `Environment: production`
+block for that hour.
+
+### 6. Flip the existing CDN origins
 
 Cutover is an origin change on the existing distributions, not a DNS change:
 
@@ -417,6 +452,41 @@ sharp edges — all learned the hard way:
 DNS records point at the distribution domains and stay outside Terraform; record the previous
 values before switching, and rollback is restoring them.
 
+## Host state outside Git
+
+cloud-init rebuilds the nginx tree, packages, PHP-FPM pools, and docroot skeletons. Everything
+below lives only on the instance. A replaced instance loses it, and nothing fails loudly when it
+is missing. Each row names the step that recreates it.
+
+| State | Where on the instance | Environments | Recreated by |
+|---|---|---|---|
+| Environment marker | `/etc/amazon-server.env` | production (absent means staging) | Bootstrap ("Production instance") |
+| Managed-database handoff | `/root/amazon-staging/db.env` | both | Step 1 |
+| Deploy keys and SSH aliases | `~ubuntu/.ssh/` | both | Step 2 |
+| Site releases | `/var/www/html/{rsvp,amazon-studios-ampas,amazon-studios-guilds}` | both | Step 2 |
+| WordPress `.env` files | each WP repo root | both | Step 2 |
+| ACF Composer credentials | each WP repo's `auth.json` | both | Step 2 |
+| Writable-path ownership | WP `web/app/uploads`, RSVP `admin/application/logs/` | both | Step 2 |
+| Uploaded media | WP `web/app/uploads` | both | No step yet: copy from the instance being replaced |
+| Origin TLS certificates | provisioner-owned certificate paths | when HTTPS-only origin is chosen | Step 3 |
+| CSP host allowlist | `/etc/nginx/snippets/rsvp-staging-csp.conf` | both | Step 4 |
+| Embed password | `/etc/nginx/.htpasswd` | staging | Step 4 |
+| RSVP reminder cron | `/etc/cron.d/amazon-rsvp-reminders` | production | Step 5 |
+
+Two rules keep this table complete:
+
+1. **Add a row in the same change** that puts anything new on an instance by hand: a cron entry,
+   a systemd timer, a config override, a credential file.
+2. **Audit the old instance before retiring it.** List its scheduled jobs and hand-edited config,
+   and match each item to a row. Copy anything unlisted, then add its row.
+
+```bash
+sudo cat /etc/crontab
+sudo ls /etc/cron.d /var/spool/cron/crontabs
+for u in root ubuntu www-data bitnami daemon; do echo "== $u"; sudo crontab -l -u "$u" 2>/dev/null; done
+systemctl list-timers --all
+```
+
 ## Staging verification
 
 Run the ratified must-serve matrix in
@@ -455,7 +525,8 @@ email-sending path during this packet.
 
 ## Teardown
 
-After an explicit driver decision, restore the recorded CDN origins first, then run:
+After an explicit driver decision, audit the instance against "Host state outside Git" and
+restore the recorded CDN origins first, then run:
 
 ```bash
 terraform destroy

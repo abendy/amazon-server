@@ -37,6 +37,16 @@ and `post_max_size` 512M, `max_execution_time` and `max_input_time` 600s; nginx
 `client_max_body_size` 600m, `client_body_timeout` 300s, `fastcgi_read_timeout` 600s for
 WordPress. Trailers upload through WP Media, so these must hold on every re-provision.
 
+## Scheduled jobs
+
+Installed by hand ([`infra/README.md`](../infra/README.md), post-apply step 5), not by cloud-init.
+
+| Environment | RSVP reminder emails (hourly) |
+|---|---|
+| local | none; run `run_reminder.docker.sh` by hand |
+| staging | none |
+| production | `/etc/cron.d/amazon-rsvp-reminders` |
+
 ## Local database publishing
 
 The site Compose files publish MySQL on `0.0.0.0` (same as today's RSVP `3307`). There is no
