@@ -20,17 +20,21 @@ The `CUSTOMER` argument is mandatory — the bare `npm run build:embed` aliases 
 
 ## Apply (instance)
 
-The branch holds only `dist/embed/consideramazon/`. Extract it into the served path:
+The branch holds only the built embed. Newer branches carry it at `public/consideramazon/`;
+branches cut before the rsvp repo ignored that folder carry it at `dist/embed/consideramazon/`.
+Extract either into the served path:
 
 ```bash
 cd /var/www/html/rsvp
 git fetch origin deploy/production-<timestamp>
+src=public/consideramazon; strip=2
+git cat-file -e "FETCH_HEAD:$src" 2>/dev/null || { src=dist/embed/consideramazon; strip=3; }
 rm -rf public/consideramazon && mkdir -p public/consideramazon
-git archive FETCH_HEAD dist/embed/consideramazon | tar -x --strip-components=3 -C public/consideramazon
+git archive FETCH_HEAD "$src" | tar -x --strip-components="$strip" -C public/consideramazon
 ```
 
-nginx aliases `/rsvp/consideramazon/` to `public/consideramazon/`; the deployed files are
-untracked there by design. Verify:
+nginx aliases `/rsvp/consideramazon/` to `public/consideramazon/`. The rsvp repo ignores that
+folder, so an apply never leaves the checkout dirty. Verify:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: rsvp.amazonmgmstudiosawards.com' \
@@ -38,6 +42,21 @@ curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: rsvp.amazonmgmstudiosawards.c
 ```
 
 Expect 200 for `rsvp.js`, `rsvp.css`, `fonts.css`, and the `fonts/*.woff2` files.
+
+## First pull after the rsvp repo stopped tracking the embed
+
+Checkouts that applied an embed before the rsvp repo ignored `public/consideramazon/` show
+`rsvp.js` modified and `rsvp.js.map` deleted, and a plain `git pull --ff-only` refuses. Once, on
+that pull, check `git status` shows nothing else, then move the checkout without touching the
+served files:
+
+```bash
+git fetch origin && git reset origin/<branch> && git checkout -- .
+```
+
+`git status` is clean afterwards and the served embed is unchanged. A checkout that never applied
+an embed pulls normally, but the pull removes the old tracked `rsvp.js`: apply a deploy branch
+right after it.
 
 ## Traps
 
