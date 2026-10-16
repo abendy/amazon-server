@@ -105,7 +105,10 @@ terraform apply production.tfplan
 ```
 
 Keep production names out of `terraform.tfvars` so a later plan in the default workspace can
-never propose replacing staging. Every post-apply manual step below applies unchanged; the
+never propose replacing staging. `production.tfvars` also sets `server_branch = "master"` and
+`auto_snapshot_time = "09:00"`: production takes daily automatic snapshots, and a plan without
+that value would turn them off. Run plans from this directory: the workspaces and their state
+live here, and `terraform workspace new` elsewhere starts an empty one. Every post-apply manual step below applies unchanged; the
 production Guilds host binding has no deployed reference and needs an explicit driver
 ratification before any CDN origin flip.
 
@@ -235,7 +238,8 @@ file, means no owned file was checked. Status prints each such cause on a `probl
 The manual checks print names, owners, modes, sizes, and pass or fail, never a value.
 They cover `db.env` (missing warns, since nothing reads it after setup; a present file
 must be root, mode 600, with the 15 key names), each WordPress `.env` (group
-`www-data`, mode 640, the key names in step 2), each `auth.json` (present), the
+`www-data`, mode 640, the key names in step 2; a missing `DB_PORT` warns), each `auth.json`
+(missing warns, since only Composer installs read it), the
 staging `.htpasswd` (empty warns without changing the verdict, non-empty passes; not
 checked on production), and the `~ubuntu/.ssh/config` alias each site checkout's
 `origin` uses.
@@ -553,7 +557,7 @@ loudly when it is missing. Each row names the step that recreates it and what
 | Deploy keys and SSH aliases | `~ubuntu/.ssh/` | both | Step 2 | Each site's alias; not the keys |
 | Site releases | `/var/www/html/{rsvp,amazon-studios-ampas,amazon-studios-guilds}` | both | Step 2 | No |
 | WordPress `.env` files | each WP repo root | both | Step 2 | Group, mode, key names |
-| ACF Composer credentials | each WP repo's `auth.json` | both | Step 2 | Present |
+| ACF Composer credentials | each WP repo's `auth.json` | both | Step 2 | Present, else warns |
 | Writable-path ownership | WP `web/app/uploads`, RSVP `admin/application/logs/` | both | Step 2 | No |
 | Uploaded media | WP `web/app/uploads` | both | No step yet: copy from the instance being replaced | No |
 | Origin TLS certificates | provisioner-owned certificate paths | when HTTPS-only origin is chosen | Step 3 | No |

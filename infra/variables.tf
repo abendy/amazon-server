@@ -49,3 +49,9 @@ variable "environment" {
     error_message = "environment must be staging or production."
   }
 }
+
+variable "auto_snapshot_time" {
+  description = "UTC hour for daily automatic snapshots, as HH:00 (production uses 09:00). Null leaves them off."
+  type        = string
+  default     = null
+}

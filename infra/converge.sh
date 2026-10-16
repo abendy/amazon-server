@@ -23,7 +23,7 @@ AMPAS_ROOT='/var/www/html/amazon-studios-ampas'
 GUILDS_ROOT='/var/www/html/amazon-studios-guilds'
 RSVP_ROOT='/var/www/html/rsvp'
 WP_ENV_KEYS=(
-  DB_NAME DB_USER DB_PASSWORD DB_HOST DB_PORT
+  DB_NAME DB_USER DB_PASSWORD DB_HOST
   WP_ENV WP_HOME WP_SITEURL
   AUTH_KEY SECURE_AUTH_KEY LOGGED_IN_KEY NONCE_KEY
   AUTH_SALT SECURE_AUTH_SALT LOGGED_IN_SALT NONCE_SALT
@@ -234,10 +234,26 @@ run_manual_checks() {
   else
     manual_result WARN 'db.env' "${DB_ENV_FILE} missing: setup handoff only, the sites do not read it"
   fi
-  check_key_file 'ampas .env' "${AMPAS_ROOT}/.env" '' www-data 640 "${WP_ENV_KEYS[@]}"
-  check_key_file 'guilds .env' "${GUILDS_ROOT}/.env" '' www-data 640 "${WP_ENV_KEYS[@]}"
-  check_present 'ampas auth.json' "${AMPAS_ROOT}/auth.json"
-  check_present 'guilds auth.json' "${GUILDS_ROOT}/auth.json"
+  local site_root
+  for site in ampas guilds; do
+    site_root="$AMPAS_ROOT"
+    [[ "$site" == guilds ]] && site_root="$GUILDS_ROOT"
+    check_key_file "${site} .env" "${site_root}/.env" '' www-data 640 "${WP_ENV_KEYS[@]}"
+    # DB_PORT is optional: without it WordPress uses the default MySQL port.
+    if [[ -f "${site_root}/.env" && -n "$(missing_key_names "${site_root}/.env" DB_PORT)" ]]; then
+      manual_result WARN "${site} DB_PORT" "${site_root}/.env has no DB_PORT: WordPress uses the default port"
+    fi
+  done
+  for site in ampas guilds; do
+    site_root="$AMPAS_ROOT"
+    [[ "$site" == guilds ]] && site_root="$GUILDS_ROOT"
+    # auth.json only feeds Composer installs; the running site never reads it.
+    if [[ -f "${site_root}/auth.json" ]]; then
+      check_present "${site} auth.json" "${site_root}/auth.json"
+    else
+      manual_result WARN "${site} auth.json" "${site_root}/auth.json missing: only Composer installs need it"
+    fi
+  done
   check_auth_file "$environment"
   check_ssh_aliases
 }
