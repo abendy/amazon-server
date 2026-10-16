@@ -19,10 +19,13 @@ normalizing them is tracked in the docs repo.
 2. **Run Terraform from the mini's clone**, in this directory, with the branch that
    carries `infra/` checked out (`develop` once RS-07 lands). The state file lives here
    and only here.
-3. **Provision from landed `develop`.** The bootstrap clones the branch in the
-   `server_branch` variable (default `develop`) and provisioner re-runs follow the same
-   branch. Land serving-tree and `infra/` changes before creating a real staging
-   instance; set `server_branch` only for a deliberate pre-land test build. On an
+3. **Provision from landed branches.** The bootstrap clones the branch in the
+   `server_branch` variable (default `develop`) and records it in
+   `/etc/amazon-server.ref`; every converge follows that file. Staging follows
+   `develop`; production follows `master`, and `amazon-server-converge` refuses any
+   other ref there. Land serving-tree and `infra/` changes before converging a real
+   instance. For a deliberate pre-land test build on staging, write the packet branch
+   into `/etc/amazon-server.ref`, converge, and write `develop` back after land. On an
    instance created before the variable existed, a wrong-branch first boot fails at
    `infra/cloud-init.sh`; recover with the failed-first-boot procedure under
    "Instance access".
@@ -153,23 +156,99 @@ present status, never config values. Migrations run before the checkout pull (RS
 When the bootstrap cloned a branch that lacks `infra/` (see ground rule 3),
 `/var/log/cloud-init-output.log` ends with
 `bash: /opt/amazon-server/infra/cloud-init.sh: No such file or directory`. Fix it over
-temporary SSH — check out the branch that carries `infra/`, then run the provisioner:
+temporary SSH. Record the branch that carries `infra/`, check it out, then run the
+provisioner from the checkout:
 
 ```bash
 ssh -i ls-temp-key ubuntu@<static-ip> \
-  'sudo git -C /opt/amazon-server fetch --depth 1 origin <branch> &&
-   sudo git -C /opt/amazon-server checkout FETCH_HEAD &&
+  'echo <branch> | sudo tee /etc/amazon-server.ref &&
+   sudo git -C /opt/amazon-server fetch --depth 1 origin <branch> &&
+   sudo git -C /opt/amazon-server checkout --detach FETCH_HEAD &&
    sudo bash /opt/amazon-server/infra/cloud-init.sh'
 ```
 
-The provisioner's self-update resets the checkout to `develop` mid-run; that is by
-design and does not affect the run already in flight.
+Run this way, without the converge shim, the provisioner fetches the branch in
+`/etc/amazon-server.ref` again and checks it out while it runs. If that moves the
+checkout, bash can read a mix of old and new script bytes. So fetch the same branch
+the ref file names. The run installs `amazon-server-converge`; use it for every later
+run ("Converge and status").
+
+## Converge and status
+
+Every server-side config on an instance comes from this repo at the instance's ref.
+One command applies it:
+
+```bash
+sudo amazon-server-converge
+```
+
+It reads `/etc/amazon-server.ref` (default `develop`) and `/etc/amazon-server.env`
+(default `staging`). It refuses to run when the environment is `production` and the
+ref is not `master`, or when `/opt/amazon-server` has uncommitted or untracked files.
+It then fetches the ref, checks it out detached, and runs that checkout's
+`infra/cloud-init.sh`. The provisioner skips its own fetch under the shim, so the
+running script is never rewritten. `/usr/local/sbin/amazon-staging-provision` is a
+symlink to the same command.
+
+A run that gets through `nginx -t` and the reload writes two files:
+
+- `/etc/amazon-server.applied`: `sha`, `ref`, `environment` and `applied_at` (UTC).
+- `/var/lib/amazon-server/applied.sha256`: a hash of every provisioner-owned file. That
+  is the nginx tree (except `.htpasswd` and the package files under `snippets/`), the
+  CSP snippet, the PHP-FPM pools, the logrotate and apt-pin files, the templates, the
+  reminder cron where installed, and the shim.
+
+A failed run leaves the previous marker in place.
+
+**First converge per instance.** Instances provisioned before the shim existed carry
+an old full copy of the provisioner. Run the repo copy once; it installs the shim:
+
+```bash
+sudo git -C /opt/amazon-server fetch --depth 1 origin <ref>
+sudo git -C /opt/amazon-server checkout --detach FETCH_HEAD
+sudo bash /opt/amazon-server/infra/cloud-init.sh
+```
+
+Use the ref that `/etc/amazon-server.ref` names. Every later run is
+`sudo amazon-server-converge`.
+
+**Status.** `sudo amazon-server-converge status` changes nothing. It prints the
+environment, the ref, the applied commit and time, the remote tip (`git ls-remote`),
+the checkout commit and whether it is clean, the manifest check, and the manual
+checks. `status --short` prints one line for probes. The verdict:
+
+| Verdict | Meaning | Exit |
+|---|---|---|
+| `CURRENT` | Applied commit is the remote tip for this environment, every owned file matches, manual checks pass | 0 |
+| `BEHIND` | Applied commit is not the remote tip (or the remote could not be read) | 1 |
+| `DRIFT` | An owned file changed or is missing, the manifest is missing or unusable, the marker names another environment or none, the checkout is dirty, or a manual check fails | 1 |
+| `UNAPPLIED` | No `/etc/amazon-server.applied` marker | 1 |
+
+`UNAPPLIED` wins over `DRIFT`, and `DRIFT` wins over `BEHIND`.
+
+The same commit renders different staging and production configs, so a matching commit
+alone is not `CURRENT`: the marker's `environment` must match `/etc/amazon-server.env`.
+An empty, unreadable or malformed manifest, or a checksum run that fails without naming a
+file, means no owned file was checked. Status prints each such cause on a `problem` line
+(appended to the `--short` line) and reads `DRIFT`.
+
+The manual checks print names, owners, modes, sizes, and pass or fail, never a value.
+They cover `db.env` (missing warns, since nothing reads it after setup; a present file
+must be root, mode 600, with the 15 key names), each WordPress `.env` (group
+`www-data`, mode 640, the key names in step 2), each `auth.json` (present), the
+staging `.htpasswd` (empty warns without changing the verdict, non-empty passes; not
+checked on production), and the `~ubuntu/.ssh/config` alias each site checkout's
+`origin` uses.
+
+**Hand edits show as drift.** A hand edit to an owned file reads as `DRIFT` until the
+change lands in this repo, and the next converge overwrites it. Change the repo, land
+it, then converge.
 
 ## Post-apply manual steps
 
-Complete these steps on the new instance before changing a CDN origin. The cloud-init script is
-safe to re-run from `/usr/local/sbin/amazon-staging-provision`; it re-renders the installed nginx
-tree and ends with its own `nginx -t` gate.
+Complete these steps on the new instance before changing a CDN origin. Re-run the provisioner at
+any time with `sudo amazon-server-converge` ("Converge and status"); it re-renders the installed
+nginx tree and ends with its own `nginx -t` gate.
 
 ### 1. Supply managed database connection values
 
@@ -358,32 +437,44 @@ sudo /usr/local/sbin/amazon-staging-provision
 The re-run renders HTTP-to-HTTPS redirects and TLS listeners only after all three certificate pairs
 exist. `nginx -t` must pass before the distribution origin policy changes.
 
-### 4. Keep the environment-only nginx values manual
+### 4. Keep the embed password manual
 
-Supply the driver-approved CSP host list — and, on staging only, the embed password — on the
-instance. Their contents never enter Terraform or Git. **Production has no embed htpasswd
-gate** (the provisioner leaves the `$rsvp_auth` map default at `off`); skip the htpasswd steps
-there.
+The RSVP CSP is provisioner-owned: `infra/csp/<environment>.conf` is installed as
+`/etc/nginx/snippets/rsvp-staging-csp.conf` on every converge. Change the policy in this
+repo, never on the instance.
+
+Only the staging embed password stays manual. Its contents never enter Terraform or Git.
+**Production has no embed htpasswd gate** (the provisioner leaves the `$rsvp_auth` map
+default at `off`); skip this step there. While the staging file is empty, a direct visit
+to the staging embed gets 401 and only the origins the `$rsvp_auth` map exempts get
+through.
 
 ```bash
-sudoedit /etc/nginx/snippets/rsvp-staging-csp.conf
-sudo nginx -t
-sudo systemctl reload nginx
-
 sudo htpasswd -c /etc/nginx/.htpasswd <staging-user>
-sudo chmod 600 /etc/nginx/.htpasswd
-sudo nginx -t
-sudo systemctl reload nginx
+sudo chown root:www-data /etc/nginx/.htpasswd
+sudo chmod 640 /etc/nginx/.htpasswd
 ```
+
+nginx workers read the file on each login as `www-data`, so no reload is needed. A root-only
+file turns every login into a 500. Converge keeps the file at `root:www-data` `640`.
 
 ### 5. Install the scheduled jobs
 
-cloud-init installs no cron entries, so a new instance runs no scheduled jobs until this step.
-Nothing fails when a job is missing; the work it does just stops.
+The provisioner owns the only scheduled job. Nothing fails when a job is missing; the work it
+does just stops.
 
 **RSVP reminders (production only).** The job runs hourly and mails each attendee 20 to 24 hours
 before their screening. A missed hour is harmless; a missing job silently skips every reminder.
 Staging has no reminder job; add one only on the driver's call.
+
+Converge installs `infra/cron/amazon-rsvp-reminders` as `/etc/cron.d/amazon-rsvp-reminders`
+(root, 0644) only when all three hold: the environment is production,
+`/var/www/html/rsvp/admin/application/scripts/run_reminder.production.sh` is executable, and
+that wrapper contains no `/opt/bitnami` path. Otherwise it prints a warning and leaves any
+existing file byte-for-byte as it is. So on a new production
+instance the job starts with the first converge after the RSVP release is in place. If an old
+instance still runs the job, remove its cron file first: two hourly runs can race and mail the
+same attendees twice.
 
 Dry-run first, as the job's user. A dry run sends nothing and writes nothing:
 
@@ -392,15 +483,8 @@ sudo -u www-data HTTP_CI_ENV=production /usr/bin/php7.4 \
   /var/www/html/rsvp/admin/index.php reminders send_reminders dry_run
 ```
 
-Then install the job:
-
-```bash
-sudo tee /etc/cron.d/amazon-rsvp-reminders >/dev/null <<'CRON'
-# RSVP reminder emails. Runs as www-data, which owns the RSVP log directory.
-0 * * * * www-data /var/www/html/rsvp/admin/application/scripts/run_reminder.production.sh >/dev/null 2>&1
-CRON
-sudo chmod 644 /etc/cron.d/amazon-rsvp-reminders
-```
+Then converge (`sudo amazon-server-converge`) and check that the run printed no reminder-cron
+warning.
 
 The script sets `HTTP_CI_ENV=production`, which is required. The CLI has no FastCGI param, and
 without it the mail guard sends to the non-production recipients instead of attendees (RSVP
@@ -454,24 +538,26 @@ values before switching, and rollback is restoring them.
 
 ## Host state outside Git
 
-cloud-init rebuilds the nginx tree, packages, PHP-FPM pools, and docroot skeletons. Everything
-below lives only on the instance. A replaced instance loses it, and nothing fails loudly when it
-is missing. Each row names the step that recreates it.
+Converge rebuilds the nginx tree, packages, PHP-FPM pools, logrotate rule, docroot skeletons,
+the RSVP CSP snippet (`infra/csp/`), and on production the RSVP reminder cron (`infra/cron/`).
+Those are provisioner-owned and listed in the applied manifest ("Converge and status").
+Everything below lives only on the instance. A replaced instance loses it, and nothing fails
+loudly when it is missing. Each row names the step that recreates it and what
+`amazon-server-converge status` checks.
 
-| State | Where on the instance | Environments | Recreated by |
-|---|---|---|---|
-| Environment marker | `/etc/amazon-server.env` | production (absent means staging) | Bootstrap ("Production instance") |
-| Managed-database handoff | `/root/amazon-staging/db.env` | both | Step 1 |
-| Deploy keys and SSH aliases | `~ubuntu/.ssh/` | both | Step 2 |
-| Site releases | `/var/www/html/{rsvp,amazon-studios-ampas,amazon-studios-guilds}` | both | Step 2 |
-| WordPress `.env` files | each WP repo root | both | Step 2 |
-| ACF Composer credentials | each WP repo's `auth.json` | both | Step 2 |
-| Writable-path ownership | WP `web/app/uploads`, RSVP `admin/application/logs/` | both | Step 2 |
-| Uploaded media | WP `web/app/uploads` | both | No step yet: copy from the instance being replaced |
-| Origin TLS certificates | provisioner-owned certificate paths | when HTTPS-only origin is chosen | Step 3 |
-| CSP host allowlist | `/etc/nginx/snippets/rsvp-staging-csp.conf` | both | Step 4 |
-| Embed password | `/etc/nginx/.htpasswd` | staging | Step 4 |
-| RSVP reminder cron | `/etc/cron.d/amazon-rsvp-reminders` | production | Step 5 |
+| State | Where on the instance | Environments | Recreated by | `status` checks |
+|---|---|---|---|---|
+| Environment marker | `/etc/amazon-server.env` | production (absent means staging) | Bootstrap ("Production instance") | Prints it |
+| Converge ref | `/etc/amazon-server.ref` | both | Bootstrap; edited for a pre-land test build (ground rule 3) | Prints it |
+| Managed-database handoff | `/root/amazon-staging/db.env` | both | Step 1 | Owner, mode, key names |
+| Deploy keys and SSH aliases | `~ubuntu/.ssh/` | both | Step 2 | Each site's alias; not the keys |
+| Site releases | `/var/www/html/{rsvp,amazon-studios-ampas,amazon-studios-guilds}` | both | Step 2 | No |
+| WordPress `.env` files | each WP repo root | both | Step 2 | Group, mode, key names |
+| ACF Composer credentials | each WP repo's `auth.json` | both | Step 2 | Present |
+| Writable-path ownership | WP `web/app/uploads`, RSVP `admin/application/logs/` | both | Step 2 | No |
+| Uploaded media | WP `web/app/uploads` | both | No step yet: copy from the instance being replaced | No |
+| Origin TLS certificates | provisioner-owned certificate paths | when HTTPS-only origin is chosen | Step 3 | No |
+| Embed password | `/etc/nginx/.htpasswd` | staging | Step 4 | Empty warns, non-empty passes |
 
 Two rules keep this table complete:
 

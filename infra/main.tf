@@ -25,6 +25,14 @@ resource "aws_lightsail_instance" "staging" {
     ManagedBy   = "terraform"
     System      = "amazon-fyc"
   }
+
+  # user_data runs once, at first boot; afterwards the instance follows
+  # /etc/amazon-server.ref. Ignoring it lets tfvars change server_branch for
+  # the next rebuild without planning a replacement. A deliberate user_data
+  # change now needs -replace.
+  lifecycle {
+    ignore_changes = [user_data]
+  }
 }
 
 resource "aws_lightsail_static_ip" "staging" {

@@ -6,11 +6,22 @@ if [[ ${EUID} -ne 0 ]]; then
   exit 1
 fi
 
+# Provisioner-owned files outside the rsynced nginx tree and the templates
+# directory, recorded where each is written. A successful run hashes them into
+# the applied manifest (write_applied_state).
+OWNED_FILES=()
+own_file() {
+  OWNED_FILES+=("$@")
+}
+
+# The installed command is the converge shim from this checkout, reinstalled
+# on every run so it tracks the repo. The old provisioner name is a symlink.
+CONVERGE_COMMAND='/usr/local/sbin/amazon-server-converge'
 PROVISIONER_SCRIPT='/usr/local/sbin/amazon-staging-provision'
 SCRIPT_SOURCE="${BASH_SOURCE[0]}"
-if [[ -f "$SCRIPT_SOURCE" && "$SCRIPT_SOURCE" != "$PROVISIONER_SCRIPT" ]]; then
-  install -m 0755 "$SCRIPT_SOURCE" "$PROVISIONER_SCRIPT"
-fi
+install -o root -g root -m 0755 "$(dirname "$SCRIPT_SOURCE")/converge.sh" "$CONVERGE_COMMAND"
+ln -sfn "$CONVERGE_COMMAND" "$PROVISIONER_SCRIPT"
+own_file "$CONVERGE_COMMAND"
 
 # ENV-DELTAS.md: Site and environment values / staging. These are the only
 # environment-specific values rendered into the installed serving tree.
@@ -66,8 +77,8 @@ STAGING_GUILDS_CSS_EXPIRES='1y'
 STAGING_GUILDS_CSS_CACHE_CONTROL=''
 STAGING_GUILDS_CSS_PRAGMA=''
 
-# ENV-DELTAS.md: provisioner-owned TLS paths and CSP include. DNS, certificate
-# issuance, and the host allowlist remain manual steps in infra/README.md.
+# ENV-DELTAS.md: provisioner-owned TLS paths and CSP include. DNS and certificate
+# issuance remain manual steps in infra/README.md; the CSP comes from infra/csp/.
 STAGING_RSVP_TLS_CERT='/etc/letsencrypt/live/stg.rsvp.amazonmgmstudiosawards.com/fullchain.pem'
 STAGING_RSVP_TLS_KEY='/etc/letsencrypt/live/stg.rsvp.amazonmgmstudiosawards.com/privkey.pem'
 STAGING_AMPAS_TLS_CERT='/etc/letsencrypt/live/stg.amazonmgmstudiosawards.com/fullchain.pem'
@@ -205,6 +216,7 @@ Package: php7.4*
 Pin: version 7.4.*
 Pin-Priority: 1001
 APT_PREFERENCE
+own_file /etc/apt/preferences.d/amazon-php74
 
 apt-get update
 apt-get install -y \
@@ -273,6 +285,7 @@ php_admin_value[post_max_size] = 512M
 php_admin_value[max_execution_time] = 600
 php_admin_value[max_input_time] = 600
 POOL
+  own_file "$PHP_FPM_POOL_DIR/${pool_name}.conf"
 }
 
 write_pool rsvp "$STAGING_RSVP_FPM_SOCKET" "$STAGING_RSVP_PHP_ERROR_LOG"
@@ -280,7 +293,12 @@ write_pool ampas "$STAGING_AMPAS_FPM_SOCKET" "$STAGING_AMPAS_PHP_ERROR_LOG"
 write_pool guilds "$STAGING_GUILDS_FPM_SOCKET" "$STAGING_GUILDS_PHP_ERROR_LOG"
 systemctl restart php7.4-fpm
 
-if [[ -d "$AMAZON_SERVER_ROOT/.git" ]]; then
+# Under amazon-server-converge the shim already fetched and checked out the
+# ref before starting this script; fetching again here could rewrite the file
+# bash is reading.
+if [[ -n "${AMAZON_SERVER_CONVERGE_SHA:-}" && -d "$AMAZON_SERVER_ROOT/.git" ]]; then
+  printf 'Using the checkout placed by amazon-server-converge (%s)\n' "$AMAZON_SERVER_CONVERGE_SHA"
+elif [[ -d "$AMAZON_SERVER_ROOT/.git" ]]; then
   git -C "$AMAZON_SERVER_ROOT" fetch --depth 1 origin "$AMAZON_SERVER_REF"
   git -C "$AMAZON_SERVER_ROOT" checkout --detach FETCH_HEAD
 else
@@ -291,15 +309,20 @@ install -d -o root -g root -m 0755 "$NGINX_ROOT"
 rsync -a --delete --exclude='.htpasswd' --exclude='snippets/' \
   "$AMAZON_SERVER_ROOT/nginx/" "$NGINX_ROOT/"
 install -d -o root -g root -m 0755 "$NGINX_ROOT/snippets"
+# nginx workers read the password file on each login, as ${NGINX_USER}. A
+# root-only file turns every login into a 500.
 if [[ ! -e "$STAGING_RSVP_AUTH_FILE" ]]; then
-  install -o root -g root -m 0600 /dev/null "$STAGING_RSVP_AUTH_FILE"
+  install -o root -g "$NGINX_USER" -m 0640 /dev/null "$STAGING_RSVP_AUTH_FILE"
 else
-  chown root:root "$STAGING_RSVP_AUTH_FILE"
-  chmod 600 "$STAGING_RSVP_AUTH_FILE"
+  chown "root:${NGINX_USER}" "$STAGING_RSVP_AUTH_FILE"
+  chmod 640 "$STAGING_RSVP_AUTH_FILE"
 fi
-if [[ ! -e "$STAGING_CSP_INCLUDE" ]]; then
-  install -o root -g root -m 0644 /dev/null "$STAGING_CSP_INCLUDE"
-fi
+# The RSVP CSP is provisioner-owned: one policy per environment, installed at
+# the snippet path the RSVP server block includes. The rsync above still spares
+# snippets/, so the package's own snippets stay as they are.
+install -o root -g root -m 0644 \
+  "$AMAZON_SERVER_ROOT/infra/csp/${AMAZON_SERVER_ENVIRONMENT}.conf" "$STAGING_CSP_INCLUDE"
+own_file "$STAGING_CSP_INCLUDE"
 
 for docroot in \
   "$STAGING_RSVP_DOCROOT" \
@@ -364,6 +387,7 @@ write_logrotate() {
 }
 LOGROTATE
   chmod 0644 /etc/logrotate.d/nginx-sites
+  own_file /etc/logrotate.d/nginx-sites
 }
 
 render_rsvp_static_include() {
@@ -777,6 +801,63 @@ render_wordpress_server() {
   rm -f "$http_file" "$https_file" "$redirect_file"
 }
 
+# The hourly RSVP reminder job mails attendees, so it runs on production only,
+# and only once the RSVP release with its wrapper is in place: executable and
+# free of the old /opt/bitnami paths. Otherwise the run warns and leaves any
+# existing file as it is.
+install_reminder_cron() {
+  local cron_source="$AMAZON_SERVER_ROOT/infra/cron/amazon-rsvp-reminders"
+  local cron_file='/etc/cron.d/amazon-rsvp-reminders'
+  local wrapper="$STAGING_RSVP_DOCROOT/admin/application/scripts/run_reminder.production.sh"
+
+  if [[ "$AMAZON_SERVER_ENVIRONMENT" != 'production' ]]; then
+    printf 'warning: reminder cron not installed: environment is %s, not production\n' \
+      "$AMAZON_SERVER_ENVIRONMENT" >&2
+  elif [[ ! -x "$wrapper" ]]; then
+    printf 'warning: reminder cron not installed: %s is missing or not executable\n' \
+      "$wrapper" >&2
+  elif grep -qF -- '/opt/bitnami' "$wrapper" || [[ $? -ne 1 ]]; then
+    printf 'warning: reminder cron not installed: %s uses /opt/bitnami paths or cannot be read\n' \
+      "$wrapper" >&2
+  else
+    install -o root -g root -m 0644 "$cron_source" "$cron_file"
+    own_file "$cron_file"
+  fi
+}
+
+# Runs only after nginx accepted and reloaded the new config, so a failed run
+# leaves the previous marker in place. The manifest covers the rsynced and
+# rendered nginx tree (minus the manual .htpasswd and the snippets/ directory
+# the rsync spares), the templates, and every own_file path. The marker goes
+# last; temp file plus rename keeps each file whole.
+write_applied_state() {
+  local state_dir='/var/lib/amazon-server'
+  local manifest_file="${state_dir}/applied.sha256"
+  local applied_file='/etc/amazon-server.applied'
+  local manifest_tmp
+  local applied_tmp
+  local applied_sha
+
+  install -d -o root -g root -m 0755 "$state_dir"
+  manifest_tmp="$(mktemp "${manifest_file}.XXXXXX")"
+  {
+    find "$NGINX_ROOT" -type f ! -path "$STAGING_RSVP_AUTH_FILE" ! -path "$NGINX_ROOT/snippets/*"
+    find "$TEMPLATE_ROOT" -type f
+    printf '%s\n' "${OWNED_FILES[@]}"
+  } | sort -u | xargs -d '\n' sha256sum > "$manifest_tmp"
+  chmod 0644 "$manifest_tmp"
+  mv -f "$manifest_tmp" "$manifest_file"
+
+  applied_sha="$(git -C "$AMAZON_SERVER_ROOT" rev-parse HEAD)"
+  applied_tmp="$(mktemp "${applied_file}.XXXXXX")"
+  printf 'sha=%s\nref=%s\nenvironment=%s\napplied_at=%s\n' \
+    "$applied_sha" "$AMAZON_SERVER_REF" "$AMAZON_SERVER_ENVIRONMENT" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$applied_tmp"
+  chmod 0644 "$applied_tmp"
+  mv -f "$applied_tmp" "$applied_file"
+  printf 'Applied %s (%s, %s)\n' "$applied_sha" "$AMAZON_SERVER_REF" "$AMAZON_SERVER_ENVIRONMENT"
+}
+
 render_base_config
 write_logrotate
 render_rsvp_static_include
@@ -826,3 +907,6 @@ render_wordpress_server \
 nginx -t
 systemctl enable --now nginx
 systemctl reload nginx
+
+install_reminder_cron
+write_applied_state
