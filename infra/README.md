@@ -236,8 +236,8 @@ Use the ref that `/etc/amazon-server.ref` names. Every later run is
 
 **Status.** `sudo amazon-server-converge status` changes nothing. It prints the
 environment, the ref, the applied commit and time, the remote tip (`git ls-remote`),
-the checkout commit and whether it is clean, the manifest check, and the manual
-checks. `status --short` prints one line for probes. The verdict:
+the checkout commit and whether it is clean, the manifest check, the PHP checks, and the
+manual checks. `status --short` prints one line for probes. The verdict:
 
 | Verdict | Meaning | Exit |
 |---|---|---|
@@ -262,6 +262,13 @@ must be root, mode 600, with the 15 key names), each WordPress `.env` (group
 staging `.htpasswd` (empty warns without changing the verdict, non-empty passes; not
 checked on production), and the `~ubuntu/.ssh/config` alias each site checkout's
 `origin` uses.
+
+The PHP checks print each site's configured version, pool file and socket, each installed
+version's FPM unit (active and enabled) and its pools, the installed `php*` packages and their
+versions, and where `/usr/bin/php` points. Any of these is `DRIFT`: a missing pool, a pool
+listening elsewhere, an absent socket, a site's pool left under another version, a used FPM
+not running and enabled, an unused installed FPM not stopped and disabled, a configured
+package not installed, or a CLI on another version.
 
 **Hand edits show as drift.** A hand edit to an owned file reads as `DRIFT` until the
 change lands in this repo, and the next converge overwrites it. Change the repo, land

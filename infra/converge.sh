@@ -15,6 +15,9 @@ REF_FILE='/etc/amazon-server.ref'
 ENVIRONMENT_FILE='/etc/amazon-server.env'
 APPLIED_FILE='/etc/amazon-server.applied'
 MANIFEST_FILE='/var/lib/amazon-server/applied.sha256'
+# The PHP settings converge applied (infra/php-sites.sh, php_write_settings).
+PHP_SETTINGS_FILE='/etc/amazon-server.php-sites'
+PHP_SITES=(rsvp ampas guilds)
 
 # Manual state that status checks by presence, owner, mode and key names only.
 DB_ENV_FILE='/root/amazon-staging/db.env'
@@ -258,6 +261,151 @@ run_manual_checks() {
   check_ssh_aliases
 }
 
+# ---- PHP per site ----------------------------------------------------------
+
+PHP_LINES=()
+PHP_PROBLEMS=()
+declare -A PHP_SETTING=()
+
+# php_result <ok|FAIL|info> <label> <detail>; FAIL is drift.
+php_result() {
+  PHP_LINES+=("$(printf '  %-4s  %-16s %s' "$1" "$2" "$3")")
+  if [[ "$1" == FAIL ]]; then
+    PHP_PROBLEMS+=("${2}: ${3}")
+  fi
+}
+
+# unit_state <unit>: "<active> <enabled>", each "unknown" when systemd has no answer.
+unit_state() {
+  local active enabled
+  active="$(systemctl is-active "$1" 2>/dev/null || true)"
+  enabled="$(systemctl is-enabled "$1" 2>/dev/null || true)"
+  printf '%s %s' "${active:-unknown}" "${enabled:-unknown}"
+}
+
+check_php_site() {
+  local site="$1" version pool socket listen state
+  version="${PHP_SETTING[${site}_version]:-}"
+  pool="${PHP_SETTING[${site}_pool]:-}"
+  socket="${PHP_SETTING[${site}_socket]:-}"
+  if [[ -z "$version" || -z "$pool" || -z "$socket" ]]; then
+    php_result FAIL "${site} pool" "no version, pool or socket in ${PHP_SETTINGS_FILE}"
+    return
+  fi
+  if [[ ! -f "$pool" ]]; then
+    php_result FAIL "${site} pool" "PHP ${version}: ${pool} missing"
+    return
+  fi
+  listen="$(awk -F' = ' '$1 == "listen" { print $2 }' "$pool")"
+  state="$(unit_state "php${version}-fpm")"
+  if [[ "$listen" != "$socket" ]]; then
+    php_result FAIL "${site} pool" "PHP ${version}: ${pool} listens on ${listen:-nothing}, want ${socket}"
+  elif [[ ! -S "$socket" ]]; then
+    php_result FAIL "${site} pool" "PHP ${version}: ${pool}, socket ${socket} absent (php${version}-fpm ${state})"
+  else
+    php_result ok "${site} pool" "PHP ${version}: ${pool}, socket ${socket}"
+  fi
+}
+
+# check_php_version <pool.d dir>: one installed version's unit and pools. An
+# FPM with a site configured on it runs and is enabled; any other is stopped
+# and disabled. A site's pool under a version it is not configured on is stale.
+check_php_version() {
+  local dir="$1" version unit state site pool want_active=false
+  local pools='' stale=''
+  version="${dir#/etc/php/}"
+  version="${version%/fpm/pool.d}"
+  unit="php${version}-fpm"
+  for site in "${PHP_SITES[@]}"; do
+    if [[ "${PHP_SETTING[${site}_version]:-}" == "$version" ]]; then
+      want_active=true
+    fi
+  done
+  for pool in "$dir"/*.conf; do
+    [[ -e "$pool" ]] || continue
+    site="$(basename "$pool" .conf)"
+    pools+="${pools:+ }${site}"
+    if [[ "${PHP_SETTING[${site}_version]:-}" != "$version" ]]; then
+      stale+="${stale:+ }${site}"
+    fi
+  done
+  state="$(unit_state "$unit")"
+  if [[ -n "$stale" ]]; then
+    php_result FAIL "$unit" "${state}; pools left behind: ${stale}"
+  elif [[ "$want_active" == true && "$state" != 'active enabled' ]]; then
+    php_result FAIL "$unit" "${state}, want active enabled; pools: ${pools:-none}"
+  elif [[ "$want_active" == false && -x "/usr/sbin/php-fpm${version}" \
+    && "$state" != 'inactive disabled' ]]; then
+    php_result FAIL "$unit" "${state}, want inactive disabled: no site uses PHP ${version}"
+  else
+    php_result ok "$unit" "${state}; pools: ${pools:-none}"
+  fi
+}
+
+# Installed php* packages by version, and any configured package not installed.
+check_php_packages() {
+  local version count versions package
+  local -a installed=() missing=()
+  mapfile -t installed < <(dpkg-query -W -f '${db:Status-Abbrev}${Package} ${Version}\n' 'php*' 2>/dev/null \
+    | awk '$1 == "ii" { print $2, $3 }' || true)
+  while IFS= read -r version; do
+    [[ -n "$version" ]] || continue
+    count="$(printf '%s\n' "${installed[@]}" | grep -c "^php${version}-" || true)"
+    versions="$(printf '%s\n' "${installed[@]}" | awk -v prefix="php${version}-" \
+      'index($1, prefix) == 1 { print $2 }' | sort -u | paste -sd ' ' -)"
+    php_result info "php${version} packages" "${count} installed: ${versions:-none}"
+  done < <(printf '%s\n' "${installed[@]}" | sed -nE 's/^php([0-9]+\.[0-9]+)-.*/\1/p' | sort -uV)
+  for package in ${PHP_SETTING[packages]:-}; do
+    if ! printf '%s\n' "${installed[@]}" | grep -q "^${package} "; then
+      missing+=("$package")
+    fi
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    php_result FAIL 'php packages' "configured but not installed: ${missing[*]}"
+  fi
+}
+
+check_php_cli() {
+  local want="${PHP_SETTING[cli_php]:-}" value
+  value="$(update-alternatives --query php 2>/dev/null | awk '$1 == "Value:" { print $2 }' || true)"
+  if [[ -z "$want" ]]; then
+    php_result FAIL 'php cli' "no cli_php in ${PHP_SETTINGS_FILE}"
+  elif [[ "$value" != "$want" ]]; then
+    php_result FAIL 'php cli' "/usr/bin/php is ${value:-not set}, want ${want}"
+  else
+    php_result ok 'php cli' "/usr/bin/php -> ${value}"
+  fi
+}
+
+run_php_checks() {
+  local key value site dir
+  if [[ ! -r "$PHP_SETTINGS_FILE" ]]; then
+    php_result FAIL 'php settings' "${PHP_SETTINGS_FILE} missing: converge has not applied per-site PHP"
+    return
+  fi
+  while IFS='=' read -r key value; do
+    [[ -n "$key" ]] && PHP_SETTING["$key"]="$value"
+  done < "$PHP_SETTINGS_FILE"
+  for site in "${PHP_SITES[@]}"; do
+    check_php_site "$site"
+  done
+  for dir in /etc/php/*/fpm/pool.d; do
+    [[ -d "$dir" ]] || continue
+    check_php_version "$dir"
+  done
+  check_php_packages
+  check_php_cli
+}
+
+# One line naming each site's configured version and the CLI's.
+php_summary() {
+  local site summary=''
+  for site in "${PHP_SITES[@]}"; do
+    summary+="${summary:+, }${site} ${PHP_SETTING[${site}_version]:-unknown}"
+  done
+  printf '%s, cli %s: %d problems' "$summary" "${PHP_SETTING[cli_version]:-unknown}" "${#PHP_PROBLEMS[@]}"
+}
+
 converge_status() {
   local short="$1"
   local environment ref key value line verdict
@@ -340,6 +488,10 @@ converge_status() {
   fi
 
   run_manual_checks "$environment"
+  run_php_checks
+  for line in "${PHP_PROBLEMS[@]}"; do
+    drift_reasons+=("$line")
+  done
 
   if [[ -z "$applied_sha" ]]; then
     verdict='UNAPPLIED'
@@ -386,6 +538,8 @@ converge_status() {
     for line in "${missing_files[@]}"; do
       printf '  missing  %s\n' "$line"
     done
+    printf '%-12s %s\n' php "$(php_summary)"
+    printf '%s\n' "${PHP_LINES[@]}"
     printf '%-12s %d failed, %d warned\n' manual "$MANUAL_FAILED" "$MANUAL_WARNED"
     printf '%s\n' "${MANUAL_LINES[@]}"
     for line in "${drift_reasons[@]}"; do
