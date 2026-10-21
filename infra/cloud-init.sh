@@ -31,7 +31,7 @@ own_file "$CONVERGE_COMMAND"
 declare \
   RSVP_PHP_VERSION='8.4' \
   AMPAS_PHP_VERSION='8.4' \
-  GUILDS_PHP_VERSION='7.4' \
+  GUILDS_PHP_VERSION='8.4' \
   PHP_CLI_VERSION='7.4'
 # shellcheck source=infra/php-sites.sh
 source "$(dirname "$SCRIPT_SOURCE")/php-sites.sh"
