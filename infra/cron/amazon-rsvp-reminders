@@ -1,5 +1,6 @@
-# Provisioner-owned: infra/cloud-init.sh installs this file as
+# Provisioner-owned: infra/cloud-init.sh renders this file to
 # /etc/cron.d/amazon-rsvp-reminders on production only, once the RSVP wrapper
 # below is executable. Change it here and converge, not on the instance.
 # RSVP reminder emails. Runs as www-data, which owns the RSVP log directory.
-0 * * * * www-data /var/www/html/rsvp/admin/application/scripts/run_reminder.production.sh >/dev/null 2>&1
+# PHP_BIN is RSVP's configured PHP version (RSVP_PHP_VERSION in cloud-init.sh).
+0 * * * * www-data PHP_BIN=${RSVP_PHP_BIN} /var/www/html/rsvp/admin/application/scripts/run_reminder.production.sh >/dev/null 2>&1

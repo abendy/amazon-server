@@ -23,6 +23,19 @@ install -o root -g root -m 0755 "$(dirname "$SCRIPT_SOURCE")/converge.sh" "$CONV
 ln -sfn "$CONVERGE_COMMAND" "$PROVISIONER_SCRIPT"
 own_file "$CONVERGE_COMMAND"
 
+# PHP version for each site's FPM pool, and the version /usr/bin/php runs.
+# Moving a site between versions is one value here and a converge. Every PHP
+# socket, pool directory, package, apt pin and unit derives from these
+# (infra/php-sites.sh); rolling back is setting the old value again.
+# shellcheck disable=SC2034  # read by infra/php-sites.sh, sourced below
+declare \
+  RSVP_PHP_VERSION='7.4' \
+  AMPAS_PHP_VERSION='7.4' \
+  GUILDS_PHP_VERSION='7.4' \
+  PHP_CLI_VERSION='7.4'
+# shellcheck source=infra/php-sites.sh
+source "$(dirname "$SCRIPT_SOURCE")/php-sites.sh"
+
 # ENV-DELTAS.md: Site and environment values / staging. These are the only
 # environment-specific values rendered into the installed serving tree.
 STAGING_RSVP_SERVER_NAME='stg.rsvp.amazonmgmstudiosawards.com'
@@ -30,7 +43,7 @@ STAGING_RSVP_HTTP_CI_ENV='staging'
 STAGING_RSVP_DOCROOT='/var/www/html/rsvp'
 STAGING_RSVP_PUBLIC_DOCROOT='/var/www/html/rsvp/public'
 STAGING_RSVP_EMBED_DOCROOT='/var/www/html/rsvp/public/consideramazon/'
-STAGING_RSVP_FPM_SOCKET='/run/php/php7.4-fpm-rsvp.sock'
+STAGING_RSVP_FPM_SOCKET="$(php_site_socket rsvp)"
 STAGING_RSVP_LOG_ROOT='/var/log/nginx/rsvp'
 STAGING_RSVP_AUTH_REALM='Staging'
 STAGING_RSVP_AUTH_FILE='/etc/nginx/.htpasswd'
@@ -39,11 +52,11 @@ STAGING_RSVP_AUTH_FILE='/etc/nginx/.htpasswd'
 # log roots. The WordPress source trees are provisioner-owned after apply.
 STAGING_AMPAS_SERVER_NAME='stg.amazonmgmstudiosawards.com'
 STAGING_AMPAS_DOCROOT='/var/www/html/amazon-studios-ampas/web'
-STAGING_AMPAS_FPM_SOCKET='/run/php/php7.4-fpm-ampas.sock'
+STAGING_AMPAS_FPM_SOCKET="$(php_site_socket ampas)"
 STAGING_AMPAS_LOG_ROOT='/var/log/nginx/ampas'
 STAGING_GUILDS_SERVER_NAME='stg.amazonmgmstudiosguilds.com'
 STAGING_GUILDS_DOCROOT='/var/www/html/amazon-studios-guilds/web'
-STAGING_GUILDS_FPM_SOCKET='/run/php/php7.4-fpm-guilds.sock'
+STAGING_GUILDS_FPM_SOCKET="$(php_site_socket guilds)"
 STAGING_GUILDS_LOG_ROOT='/var/log/nginx/guilds'
 
 # ENV-DELTAS.md: Site-specific shared-policy values and RSVP's staging embed
@@ -144,8 +157,6 @@ AMAZON_SERVER_REF="$(cat /etc/amazon-server.ref 2>/dev/null || echo develop)"
 AMAZON_SERVER_ROOT='/opt/amazon-server'
 NGINX_ROOT='/etc/nginx'
 NGINX_USER='www-data'
-PHP_VERSION='7.4'
-PHP_FPM_POOL_DIR="/etc/php/${PHP_VERSION}/fpm/pool.d"
 PHP_FPM_LOG_ROOT='/var/log/php-fpm'
 TEMPLATE_ROOT='/var/lib/amazon-staging/templates'
 
@@ -159,9 +170,6 @@ STAGING_AMPAS_ERROR_LOG="${STAGING_AMPAS_LOG_ROOT}/error.log"
 STAGING_GUILDS_ACCESS_LOG="${STAGING_GUILDS_LOG_ROOT}/access.log"
 STAGING_GUILDS_SCRIPTS_LOG="${STAGING_GUILDS_LOG_ROOT}/scripts.log"
 STAGING_GUILDS_ERROR_LOG="${STAGING_GUILDS_LOG_ROOT}/error.log"
-STAGING_RSVP_PHP_ERROR_LOG="${PHP_FPM_LOG_ROOT}/rsvp-error.log"
-STAGING_AMPAS_PHP_ERROR_LOG="${PHP_FPM_LOG_ROOT}/ampas-error.log"
-STAGING_GUILDS_PHP_ERROR_LOG="${PHP_FPM_LOG_ROOT}/guilds-error.log"
 
 export STAGING_RSVP_SERVER_NAME STAGING_RSVP_HTTP_CI_ENV STAGING_RSVP_DOCROOT
 export STAGING_RSVP_PUBLIC_DOCROOT
@@ -211,27 +219,15 @@ apt-get install -y \
 
 add-apt-repository -y ppa:ondrej/php
 
-cat > /etc/apt/preferences.d/amazon-php74 <<'APT_PREFERENCE'
-Package: php7.4*
-Pin: version 7.4.*
-Pin-Priority: 1001
-APT_PREFERENCE
-own_file /etc/apt/preferences.d/amazon-php74
+php_write_apt_pins
 
 apt-get update
-apt-get install -y \
-  php7.4-cli \
-  php7.4-curl \
-  php7.4-fpm \
-  php7.4-gd \
-  php7.4-intl \
-  php7.4-mbstring \
-  php7.4-mysql \
-  php7.4-xml \
-  php7.4-zip
+php_install_packages
+php_write_timezone_ini
 
 # Composer comes from the phar installer, never apt: the Ubuntu composer
-# package depends on the distribution PHP and would install PHP 8 beside 7.4.
+# package depends on the distribution PHP and would install it beside the
+# configured versions.
 # cloud-init's script runner provides no HOME, and the installer refuses to
 # run without one (first-boot finding, abendy/amazon-docs#85).
 if ! command -v composer >/dev/null 2>&1; then
@@ -246,7 +242,7 @@ if ! command -v node >/dev/null 2>&1; then
   apt-get install -y nodejs
 fi
 
-systemctl enable php7.4-fpm
+php_enable_units
 systemctl enable nginx
 
 install -d -o root -g root -m 0700 "$(dirname "$STAGING_DB_ENV_FILE")"
@@ -255,43 +251,9 @@ if [[ -e "$STAGING_DB_ENV_FILE" ]]; then
   chmod 600 "$STAGING_DB_ENV_FILE"
 fi
 
-install -d -o root -g root -m 0755 "$PHP_FPM_POOL_DIR"
 install -d -o root -g root -m 0755 "$PHP_FPM_LOG_ROOT"
-rm -f "$PHP_FPM_POOL_DIR/www.conf"
 
-write_pool() {
-  local pool_name="$1"
-  local socket_path="$2"
-  local error_log="$3"
-
-  cat > "$PHP_FPM_POOL_DIR/${pool_name}.conf" <<POOL
-[${pool_name}]
-user = www-data
-group = www-data
-listen = ${socket_path}
-listen.owner = www-data
-listen.group = www-data
-listen.mode = 0660
-pm = dynamic
-pm.max_children = 20
-pm.start_servers = 3
-pm.min_spare_servers = 2
-pm.max_spare_servers = 5
-pm.max_requests = 500
-php_admin_flag[log_errors] = on
-php_admin_value[error_log] = ${error_log}
-php_admin_value[upload_max_filesize] = 512M
-php_admin_value[post_max_size] = 512M
-php_admin_value[max_execution_time] = 600
-php_admin_value[max_input_time] = 600
-POOL
-  own_file "$PHP_FPM_POOL_DIR/${pool_name}.conf"
-}
-
-write_pool rsvp "$STAGING_RSVP_FPM_SOCKET" "$STAGING_RSVP_PHP_ERROR_LOG"
-write_pool ampas "$STAGING_AMPAS_FPM_SOCKET" "$STAGING_AMPAS_PHP_ERROR_LOG"
-write_pool guilds "$STAGING_GUILDS_FPM_SOCKET" "$STAGING_GUILDS_PHP_ERROR_LOG"
-systemctl restart php7.4-fpm
+php_place_pools
 
 # Under amazon-server-converge the shim already fetched and checked out the
 # ref before starting this script; fetching again here could rewrite the file
@@ -820,7 +782,13 @@ install_reminder_cron() {
     printf 'warning: reminder cron not installed: %s uses /opt/bitnami paths or cannot be read\n' \
       "$wrapper" >&2
   else
-    install -o root -g root -m 0644 "$cron_source" "$cron_file"
+    # The wrapper runs PHP_BIN, so the job follows RSVP's configured version.
+    local rendered_cron
+    rendered_cron="$(mktemp)"
+    RSVP_PHP_BIN="/usr/bin/php$(php_site_version rsvp)" \
+      envsubst "\${RSVP_PHP_BIN}" < "$cron_source" > "$rendered_cron"
+    install -o root -g root -m 0644 "$rendered_cron" "$cron_file"
+    rm -f "$rendered_cron"
     own_file "$cron_file"
   fi
 }
@@ -907,6 +875,7 @@ render_wordpress_server \
 nginx -t
 systemctl enable --now nginx
 systemctl reload nginx
+php_retire_stale
 
 install_reminder_cron
 write_applied_state

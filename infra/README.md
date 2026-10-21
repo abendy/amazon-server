@@ -198,10 +198,29 @@ A run that gets through `nginx -t` and the reload writes two files:
 - `/etc/amazon-server.applied`: `sha`, `ref`, `environment` and `applied_at` (UTC).
 - `/var/lib/amazon-server/applied.sha256`: a hash of every provisioner-owned file. That
   is the nginx tree (except `.htpasswd` and the package files under `snippets/`), the
-  CSP snippet, the PHP-FPM pools, the logrotate and apt-pin files, the templates, the
-  reminder cron where installed, and the shim.
+  CSP snippet, the PHP-FPM pools, the PHP settings and time zone files, the logrotate and
+  apt-pin files, the templates, the reminder cron where installed, and the shim.
 
 A failed run leaves the previous marker in place.
+
+**PHP per site.** `infra/cloud-init.sh` sets `RSVP_PHP_VERSION`, `AMPAS_PHP_VERSION`,
+`GUILDS_PHP_VERSION` and `PHP_CLI_VERSION`. `infra/php-sites.sh` derives the rest from them:
+
+- Converge installs the package set for every version a site or the CLI uses, with one apt pin
+  file each (`/etc/apt/preferences.d/amazon-php<version>`, digits only).
+- Each site's pool is `/etc/php/<version>/fpm/pool.d/<site>.conf`, listening on
+  `/run/php/php<version>-fpm-<site>.sock`, and nginx renders that socket.
+- `update-alternatives --set php` keeps `/usr/bin/php` on `PHP_CLI_VERSION`, so installing a
+  newer version never moves it.
+- Every installed version gets `zz-amazon-timezone.ini` (`date.timezone = UTC`) in its
+  `fpm/conf.d` and `cli/conf.d`.
+- `/etc/amazon-server.php-sites` records what was applied, for status and the cache purge.
+
+To move a site, change its value, land it, and converge. The new pool starts before nginx
+reloads onto its socket. After the reload, converge deletes the site's pool from every other
+version, restarts an FPM that lost a pool, and stops and disables an installed FPM left with no
+pools. Its packages stay installed until close-out removes them. Rolling back is the same move
+with the old value.
 
 **First converge per instance.** Instances provisioned before the shim existed carry
 an old full copy of the provisioner. Run the repo copy once; it installs the shim:
@@ -372,7 +391,7 @@ sudo find /var/www/html/rsvp -depth -type d -empty -delete
 
 **WordPress dependencies (AMPAS and Guilds).** cloud-init installs `unzip` and
 Composer (phar installer — never `apt install composer`, which installs a second,
-newer PHP alongside 7.4). Run `composer install --no-dev --no-interaction` at each WP
+distribution PHP alongside the configured versions). Run `composer install --no-dev --no-interaction` at each WP
 repo root. ACF Pro downloads from ACF's own composer repository and prompts for
 credentials: **username is the license key, password is a site URL registered to that
 license** (register URLs in the ACF account first). Let Composer store them in the
@@ -483,7 +502,8 @@ same attendees twice.
 Dry-run first, as the job's user. A dry run sends nothing and writes nothing:
 
 ```bash
-sudo -u www-data HTTP_CI_ENV=production /usr/bin/php7.4 \
+rsvp_php="$(awk -F= '$1 == "rsvp_php" { print $2 }' /etc/amazon-server.php-sites)"
+sudo -u www-data HTTP_CI_ENV=production "$rsvp_php" \
   /var/www/html/rsvp/admin/index.php reminders send_reminders dry_run
 ```
 
@@ -492,8 +512,8 @@ warning.
 
 The script sets `HTTP_CI_ENV=production`, which is required. The CLI has no FastCGI param, and
 without it the mail guard sends to the non-production recipients instead of attendees (RSVP
-`docs/DEPLOYMENT.md`, "Outgoing mail"). The script finds `php7.4` on cron's PATH; set `PHP_BIN`
-in the cron line to use another binary.
+`docs/DEPLOYMENT.md`, "Outgoing mail"). The cron line sets `PHP_BIN` to RSVP's configured
+binary (`RSVP_PHP_VERSION` in `infra/cloud-init.sh`), so the job moves with the site's pool.
 
 After the next full hour, confirm the job ran: the newest
 `/var/www/html/rsvp/admin/application/logs/reminders-*.log` holds an `Environment: production`
