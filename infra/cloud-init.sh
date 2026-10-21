@@ -30,7 +30,7 @@ own_file "$CONVERGE_COMMAND"
 # shellcheck disable=SC2034  # read by infra/php-sites.sh, sourced below
 declare \
   RSVP_PHP_VERSION='8.4' \
-  AMPAS_PHP_VERSION='7.4' \
+  AMPAS_PHP_VERSION='8.4' \
   GUILDS_PHP_VERSION='7.4' \
   PHP_CLI_VERSION='7.4'
 # shellcheck source=infra/php-sites.sh
