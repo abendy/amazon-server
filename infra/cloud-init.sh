@@ -224,6 +224,7 @@ php_write_apt_pins
 apt-get update
 php_install_packages
 php_write_timezone_ini
+php_write_security_ini
 
 # Composer comes from the phar installer, never apt: the Ubuntu composer
 # package depends on the distribution PHP and would install it beside the

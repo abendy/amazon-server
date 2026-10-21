@@ -214,6 +214,8 @@ A failed run leaves the previous marker in place.
   newer version never moves it.
 - Every installed version gets `zz-amazon-timezone.ini` (`date.timezone = UTC`) in its
   `fpm/conf.d` and `cli/conf.d`.
+- Every installed version gets `zz-amazon-security.ini` (`session.upload_progress.enabled = 0`,
+  CVE-2026-109619) in its `fpm/conf.d`. No site uses upload progress.
 - `/etc/amazon-server.php-sites` records what was applied, for status and the cache purge.
 
 To move a site, change its value, land it, and converge. The new pool starts before nginx

@@ -113,6 +113,19 @@ php_write_timezone_ini() {
   done
 }
 
+# CVE-2026-109619 (GHSA-6wmf-4rv5-p3rp): no site uses session upload progress,
+# and the advisory says to keep it off after patching. FPM only: the CLI serves
+# no web requests.
+php_write_security_ini() {
+  local dir ini
+  for dir in "$PHP_SYSROOT"/etc/php/*/fpm/conf.d; do
+    [[ -d "$dir" ]] || continue
+    ini="${dir}/zz-amazon-security.ini"
+    printf '; CVE-2026-109619: no site uses upload progress. Keep off after patching.\nsession.upload_progress.enabled = 0\n' > "$ini"
+    own_file "$ini"
+  done
+}
+
 php_enable_units() {
   local version
   while IFS= read -r version; do

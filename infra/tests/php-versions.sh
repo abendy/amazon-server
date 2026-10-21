@@ -100,6 +100,7 @@ converge() {
   apt-get update
   php_install_packages
   php_write_timezone_ini
+  php_write_security_ini
   php_enable_units
   php_place_pools
   local site
@@ -216,7 +217,7 @@ tree_digest() {
 CASE='wiring'
 expect_text 'cloud-init.sh PHP steps, in order' \
   "$(printf '%s\n' php_write_apt_pins php_install_packages php_write_timezone_ini \
-    php_enable_units php_place_pools php_retire_stale)" \
+    php_write_security_ini php_enable_units php_place_pools php_retire_stale)" \
   "$(grep -oE '^php_[a-z_]+$' "${INFRA_DIR}/cloud-init.sh")"
 for site in RSVP AMPAS GUILDS; do
   lower="${site,,}"
@@ -243,11 +244,14 @@ done
 expect_file /etc/apt/preferences.d/amazon-php74 "$(pin_text 7.4)"
 expect_file /etc/php/7.4/fpm/conf.d/zz-amazon-timezone.ini 'date.timezone = UTC'
 expect_file /etc/php/7.4/cli/conf.d/zz-amazon-timezone.ini 'date.timezone = UTC'
+expect_file /etc/php/7.4/fpm/conf.d/zz-amazon-security.ini '; CVE-2026-109619: no site uses upload progress. Keep off after patching.
+session.upload_progress.enabled = 0'
 expect_sockets '/run/php/php7.4-fpm-ampas.sock /run/php/php7.4-fpm-guilds.sock /run/php/php7.4-fpm-rsvp.sock'
 expect_text 'owned files' "$(printf '%s\n' \
   "${PHP_SYSROOT}/etc/apt/preferences.d/amazon-php74" \
   "${PHP_SYSROOT}/etc/php/7.4/fpm/conf.d/zz-amazon-timezone.ini" \
   "${PHP_SYSROOT}/etc/php/7.4/cli/conf.d/zz-amazon-timezone.ini" \
+  "${PHP_SYSROOT}/etc/php/7.4/fpm/conf.d/zz-amazon-security.ini" \
   "${PHP_SYSROOT}/etc/php/7.4/fpm/pool.d/rsvp.conf" \
   "${PHP_SYSROOT}/etc/php/7.4/fpm/pool.d/ampas.conf" \
   "${PHP_SYSROOT}/etc/php/7.4/fpm/pool.d/guilds.conf" \
@@ -296,6 +300,8 @@ expect_file /etc/apt/preferences.d/amazon-php74 "$(pin_text 7.4)"
 expect_file /etc/apt/preferences.d/amazon-php84 "$(pin_text 8.4)"
 expect_file /etc/php/8.4/fpm/conf.d/zz-amazon-timezone.ini 'date.timezone = UTC'
 expect_file /etc/php/8.4/cli/conf.d/zz-amazon-timezone.ini 'date.timezone = UTC'
+expect_file /etc/php/8.4/fpm/conf.d/zz-amazon-security.ini '; CVE-2026-109619: no site uses upload progress. Keep off after patching.
+session.upload_progress.enabled = 0'
 expect_sockets '/run/php/php7.4-fpm-ampas.sock /run/php/php7.4-fpm-guilds.sock /run/php/php8.4-fpm-rsvp.sock'
 if ! grep -qxF 'rsvp_php=/usr/bin/php8.4' "$PHP_SETTINGS_FILE"; then
   fail 'settings do not give RSVP /usr/bin/php8.4'
