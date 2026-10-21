@@ -4,6 +4,7 @@ set -eu
 
 DEFAULT_REPO_ROOT='/var/www/html'
 TITLES_TRANSIENT='vm_titles_catalog'
+PHP_SETTINGS_FILE='/etc/amazon-server.php-sites'
 
 usage() {
     cat <<'EOF'
@@ -152,13 +153,22 @@ run_sql() {
     run_php_sql
 }
 
+# PHP_BIN overrides. On a converged host the site's configured binary comes
+# from the settings converge applied (infra/php-sites.sh); elsewhere, php.
+site_php_binary() {
+    [ -r "$PHP_SETTINGS_FILE" ] || return 1
+    awk -F= -v key="${site}_php" '$1 == key { print $2 }' "$PHP_SETTINGS_FILE" | tail -n 1
+}
+
 run_php_sql() {
-    php_binary=''
-    if command -v php7.4 >/dev/null 2>&1; then
-        php_binary='php7.4'
-    elif command -v php >/dev/null 2>&1; then
+    php_binary="${PHP_BIN:-}"
+    if [ -z "$php_binary" ]; then
+        php_binary="$(site_php_binary || true)"
+    fi
+    if [ -z "$php_binary" ] && command -v php >/dev/null 2>&1; then
         php_binary='php'
-    else
+    fi
+    if [ -z "$php_binary" ] || ! command -v "$php_binary" >/dev/null 2>&1; then
         return 1
     fi
 

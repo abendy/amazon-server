@@ -87,7 +87,9 @@ Guilds /var/www/html/amazon-studios-guilds
 The hosted purge command is explicit and reads `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`,
 `DB_PASSWORD`, and `DB_PREFIX` from the deployed site's `.env`; matching keys in `.env.local`
 override them. It uses the host's `mariadb` or `mysql` client, then falls back to PHP PDO MySQL
-when the client is unavailable. The provisioned host has PHP 7.4 CLI and `php7.4-mysql`. No
+when the client is unavailable. That PHP is `PHP_BIN` when set, else the site's configured binary
+(`ampas_php` or `guilds_php` in `/etc/amazon-server.php-sites`, written by converge), else `php`;
+converge installs the MySQL extension for every configured version. No
 database credential is printed or written to logs.
 
 The apply script calls the purge hook without arguments. Set the site and wrapper for each apply:
