@@ -591,6 +591,7 @@ loudly when it is missing. Each row names the step that recreates it and what
 | Uploaded media | WP `web/app/uploads` | both | No step yet: copy from the instance being replaced | No |
 | Origin TLS certificates | provisioner-owned certificate paths | when HTTPS-only origin is chosen | Step 3 | No |
 | Embed password | `/etc/nginx/.htpasswd` | staging | Step 4 | Empty warns, non-empty passes |
+| IPv4 TCP mitigation (CVE-2026-98432) | `/etc/sysctl.d/99-no-mptcp.conf`, `/etc/nftables.d/cve-2026-98432.nft`, `/etc/systemd/system/cve-2026-98432.service` | staging; production after its own rollout | `_docs` `security/20261102-cve-2026-98432-tcp-mitigation/rollout.md` and its script | No; use the rollout's verify list |
 
 Two rules keep this table complete:
 
