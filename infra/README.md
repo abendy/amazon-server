@@ -606,6 +606,26 @@ for u in root ubuntu www-data bitnami daemon; do echo "== $u"; sudo crontab -l -
 systemctl list-timers --all
 ```
 
+## CloudFront address list
+
+The RSVP server block takes the client address from `X-Forwarded-For` only when one of
+CloudFront's origin-facing addresses made the connection. Every Lightsail distribution reaches
+the origin from those addresses. Any other caller, including a direct-origin check, keeps its own
+address, and a forged header changes nothing. The booking throttle and the API's booking checks
+both key on that address.
+
+The list lives in `nginx/includes/cloudfront-real-ip.conf`, generated from AWS's published
+ranges. When AWS adds a range the list lacks, guests arriving through it share their edge's
+address and can trip the booking throttle together. Check the list before each production
+converge, and refresh it when the check fails:
+
+```bash
+scripts/update-cloudfront-ranges.py --check
+scripts/update-cloudfront-ranges.py
+```
+
+Commit the refreshed file, then converge staging and production.
+
 ## Staging verification
 
 Run the ratified must-serve matrix in

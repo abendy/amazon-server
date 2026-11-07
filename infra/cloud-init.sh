@@ -419,6 +419,9 @@ server {
   include includes/security.conf;
   include includes/rsvp-static.conf;
 
+  # Trust X-Forwarded-For from CloudFront only.
+  include includes/cloudfront-real-ip.conf;
+
   # Booking throttle; the zones and route match live in nginx.conf.
   limit_req zone=rsvp_booking_viewer burst=60 nodelay;
   limit_req zone=rsvp_booking_peer burst=300 nodelay;
@@ -484,7 +487,7 @@ server {
     fastcgi_param PATH_INFO $fastcgi_path_info;
     fastcgi_param HTTP_CI_ENV $rsvp_http_ci_env;
     # The booking throttle's viewer address, for the API's booking signals.
-    fastcgi_param RSVP_VIEWER_ADDR $rsvp_viewer_addr;
+    fastcgi_param RSVP_VIEWER_ADDR $remote_addr;
 
     fastcgi_buffers 16 16k;
     fastcgi_buffer_size 32k;
@@ -541,6 +544,9 @@ server {
   include snippets/rsvp-staging-csp.conf;
   include includes/security.conf;
   include includes/rsvp-static.conf;
+
+  # Trust X-Forwarded-For from CloudFront only.
+  include includes/cloudfront-real-ip.conf;
 
   # Booking throttle; the zones and route match live in nginx.conf.
   limit_req zone=rsvp_booking_viewer burst=60 nodelay;
@@ -603,7 +609,7 @@ server {
     fastcgi_param PATH_INFO $fastcgi_path_info;
     fastcgi_param HTTP_CI_ENV $rsvp_http_ci_env;
     # The booking throttle's viewer address, for the API's booking signals.
-    fastcgi_param RSVP_VIEWER_ADDR $rsvp_viewer_addr;
+    fastcgi_param RSVP_VIEWER_ADDR $remote_addr;
 
     fastcgi_buffers 16 16k;
     fastcgi_buffer_size 32k;
