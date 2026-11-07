@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Version-switch test for infra/php-sites.sh. Sources the library with a
 # temporary PHP_SYSROOT and stubbed apt-get, systemctl, update-alternatives and
-# install, then converges four site layouts in turn:
-#   1. all three sites at 7.4: today's pools, pin, packages and units
+# install, then converges five site layouts in turn:
+#   1. all three sites at 7.4: the pre-cutover pools, pin, packages and units
 #   2. RSVP at 8.4: its pool and nginx socket move, 7.4 keeps two pools
-#   4. RSVP back at 7.4: the 8.4 pools and sockets go away
-#   3. all three at 8.4: the 7.4 FPM is stopped and disabled
+#   4. RSVP back at 7.4: the 8.4 pools and sockets go away, 8.4 is purged
+#   3. all three at 8.4, CLI on 7.4: the 7.4 FPM is stopped and disabled
+#   5. CLI moved to 8.4: nothing uses 7.4, so it is purged
 # Exit status is the number of failed checks.
 set -Eeuo pipefail
 
@@ -17,7 +18,7 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 export PHP_SYSROOT="${WORK_DIR}/root"
 CALLS="${WORK_DIR}/calls"
 PHP_FPM_LOG_ROOT='/var/log/php-fpm'
-PHP_CLI_VERSION='7.4'
+PHP_CLI_VERSION=''
 RSVP_PHP_VERSION=''
 AMPAS_PHP_VERSION=''
 GUILDS_PHP_VERSION=''
@@ -46,12 +47,17 @@ install() {
 
 # A php<ver>-fpm install lays down what the package would: the conf.d and
 # pool.d directories, the FPM binary and, on a first install only, www.conf.
+# A purge removes the FPM binary; converge deletes what is left under /etc/php.
 apt-get() {
   printf 'apt-get %s\n' "$*" >> "$CALLS"
   local package version etc
   for package in "$@"; do
     [[ "$package" =~ ^php([0-9]+\.[0-9]+)-fpm$ ]] || continue
     version="${BASH_REMATCH[1]}"
+    if [[ "$1" == purge ]]; then
+      rm -f "${PHP_SYSROOT}/usr/sbin/php-fpm${version}"
+      continue
+    fi
     etc="${PHP_SYSROOT}/etc/php/${version}"
     if [[ ! -d "${etc}/fpm/pool.d" ]]; then
       mkdir -p "${etc}/fpm/pool.d" "${etc}/fpm/conf.d" "${etc}/cli/conf.d" "${PHP_SYSROOT}/usr/sbin"
@@ -59,6 +65,17 @@ apt-get() {
       printf '#!/bin/sh\n' > "${PHP_SYSROOT}/usr/sbin/php-fpm${version}"
       chmod 0755 "${PHP_SYSROOT}/usr/sbin/php-fpm${version}"
     fi
+  done
+}
+
+# dpkg knows a version's whole package set while its FPM binary is installed.
+dpkg-query() {
+  local fpm package
+  for fpm in "${PHP_SYSROOT}"/usr/sbin/php-fpm*; do
+    [[ -e "$fpm" ]] || continue
+    for package in $(packages_line "${fpm##*php-fpm}"); do
+      printf 'ii  %s\n' "$package"
+    done
   done
 }
 
@@ -90,10 +107,11 @@ systemctl() {
 
 # The PHP steps in cloud-init.sh's order. nginx renders between the two pool
 # steps; the stand-in records the socket each site's server block gets.
-converge() {
+converge() {  # converge <rsvp> <ampas> <guilds> <cli>
   RSVP_PHP_VERSION="$1"
   AMPAS_PHP_VERSION="$2"
   GUILDS_PHP_VERSION="$3"
+  PHP_CLI_VERSION="$4"
   OWNED_FILES=()
   : > "$CALLS"
   php_write_apt_pins
@@ -108,6 +126,7 @@ converge() {
     printf 'nginx %s unix:%s\n' "$site" "$(php_site_socket "$site")" >> "$CALLS"
   done
   php_retire_stale
+  php_purge_unused
 }
 
 fail() {
@@ -202,6 +221,12 @@ packages_line() {
   printf '%s' "${packages[*]}"
 }
 
+alternatives_lines() {  # alternatives_lines <cli version>
+  printf 'update-alternatives --set php /usr/bin/php%s\n' "$1"
+  printf 'update-alternatives --set phar /usr/bin/phar%s\n' "$1"
+  printf 'update-alternatives --set phar.phar /usr/bin/phar.phar%s' "$1"
+}
+
 nginx_lines() {  # nginx_lines <rsvp> <ampas> <guilds>
   printf 'nginx rsvp unix:/run/php/php%s-fpm-rsvp.sock\n' "$1"
   printf 'nginx ampas unix:/run/php/php%s-fpm-ampas.sock\n' "$2"
@@ -217,7 +242,7 @@ tree_digest() {
 CASE='wiring'
 expect_text 'cloud-init.sh PHP steps, in order' \
   "$(printf '%s\n' php_write_apt_pins php_install_packages php_write_timezone_ini \
-    php_write_security_ini php_enable_units php_place_pools php_retire_stale)" \
+    php_write_security_ini php_enable_units php_place_pools php_retire_stale php_purge_unused)" \
   "$(grep -oE '^php_[a-z_]+$' "${INFRA_DIR}/cloud-init.sh")"
 for site in RSVP AMPAS GUILDS; do
   lower="${site,,}"
@@ -229,11 +254,11 @@ done
 # ---- 1. all three sites at 7.4 ----------------------------------------------
 
 CASE='1 (all at 7.4)'
-converge 7.4 7.4 7.4
+converge 7.4 7.4 7.4 7.4
 # Today's calls, plus the CLI pin.
 expect_calls "apt-get update
 apt-get install -y $(packages_line 7.4)
-update-alternatives --set php /usr/bin/php7.4
+$(alternatives_lines 7.4)
 systemctl enable php7.4-fpm
 systemctl restart php7.4-fpm
 $(nginx_lines 7.4 7.4 7.4)"
@@ -275,17 +300,17 @@ packages=$(packages_line 7.4)"
 CASE='1 (all at 7.4, re-run)'
 first_digest="$(tree_digest)"
 first_calls="$(<"$CALLS")"
-converge 7.4 7.4 7.4
+converge 7.4 7.4 7.4 7.4
 expect_text 'a second converge writes the same files' "$first_digest" "$(tree_digest)"
 expect_calls "$first_calls"
 
 # ---- 2. RSVP at 8.4 ---------------------------------------------------------
 
 CASE='2 (RSVP at 8.4)'
-converge 8.4 7.4 7.4
+converge 8.4 7.4 7.4 7.4
 expect_calls "apt-get update
 apt-get install -y $(packages_line 7.4 8.4)
-update-alternatives --set php /usr/bin/php7.4
+$(alternatives_lines 7.4)
 systemctl enable php7.4-fpm
 systemctl enable php8.4-fpm
 systemctl restart php7.4-fpm
@@ -310,29 +335,30 @@ fi
 # ---- 4. RSVP moved back to 7.4 ----------------------------------------------
 
 CASE='4 (RSVP back at 7.4)'
-converge 7.4 7.4 7.4
+converge 7.4 7.4 7.4 7.4
 expect_calls "apt-get update
 apt-get install -y $(packages_line 7.4)
-update-alternatives --set php /usr/bin/php7.4
+$(alternatives_lines 7.4)
 systemctl enable php7.4-fpm
 systemctl restart php7.4-fpm
 $(nginx_lines 7.4 7.4 7.4)
 systemctl stop php8.4-fpm
-systemctl disable php8.4-fpm"
-expect_pools 8.4 ''
+systemctl disable php8.4-fpm
+apt-get purge -y $(packages_line 8.4)"
+expect_absent /etc/php/8.4
 expect_pools 7.4 'ampas.conf guilds.conf rsvp.conf'
 expect_file /etc/php/7.4/fpm/pool.d/rsvp.conf "$(pool_text rsvp 7.4)"
 expect_absent /etc/apt/preferences.d/amazon-php84
-expect_present /usr/sbin/php-fpm8.4
+expect_absent /usr/sbin/php-fpm8.4
 expect_sockets '/run/php/php7.4-fpm-ampas.sock /run/php/php7.4-fpm-guilds.sock /run/php/php7.4-fpm-rsvp.sock'
 
 # ---- 3. all three sites at 8.4 ----------------------------------------------
 
 CASE='3 (all at 8.4)'
-converge 8.4 8.4 8.4
+converge 8.4 8.4 8.4 7.4
 expect_calls "apt-get update
 apt-get install -y $(packages_line 7.4 8.4)
-update-alternatives --set php /usr/bin/php7.4
+$(alternatives_lines 7.4)
 systemctl enable php8.4-fpm
 systemctl restart php8.4-fpm
 $(nginx_lines 8.4 8.4 8.4)
@@ -345,8 +371,52 @@ for site in rsvp ampas guilds; do
 done
 expect_sockets '/run/php/php8.4-fpm-ampas.sock /run/php/php8.4-fpm-guilds.sock /run/php/php8.4-fpm-rsvp.sock'
 expect_file /etc/apt/preferences.d/amazon-php74 "$(pin_text 7.4)"
+expect_present /usr/sbin/php-fpm7.4
+
+# ---- 5. CLI moved to 8.4: 7.4 is purged ------------------------------------
+
+CASE='5 (CLI at 8.4)'
+converge 8.4 8.4 8.4 8.4
+expect_calls "apt-get update
+apt-get install -y $(packages_line 8.4)
+$(alternatives_lines 8.4)
+systemctl enable php8.4-fpm
+systemctl restart php8.4-fpm
+$(nginx_lines 8.4 8.4 8.4)
+systemctl stop php7.4-fpm
+systemctl disable php7.4-fpm
+apt-get purge -y $(packages_line 7.4)"
+expect_absent /etc/php/7.4
+expect_absent /usr/sbin/php-fpm7.4
+expect_absent /etc/apt/preferences.d/amazon-php74
+expect_file /etc/apt/preferences.d/amazon-php84 "$(pin_text 8.4)"
+expect_pools 8.4 'ampas.conf guilds.conf rsvp.conf'
+expect_sockets '/run/php/php8.4-fpm-ampas.sock /run/php/php8.4-fpm-guilds.sock /run/php/php8.4-fpm-rsvp.sock'
+expect_text 'owned files' "$(printf '%s\n' \
+  "${PHP_SYSROOT}/etc/apt/preferences.d/amazon-php84" \
+  "${PHP_SYSROOT}/etc/php/8.4/fpm/conf.d/zz-amazon-timezone.ini" \
+  "${PHP_SYSROOT}/etc/php/8.4/cli/conf.d/zz-amazon-timezone.ini" \
+  "${PHP_SYSROOT}/etc/php/8.4/fpm/conf.d/zz-amazon-security.ini" \
+  "${PHP_SYSROOT}/etc/php/8.4/fpm/pool.d/rsvp.conf" \
+  "${PHP_SYSROOT}/etc/php/8.4/fpm/pool.d/ampas.conf" \
+  "${PHP_SYSROOT}/etc/php/8.4/fpm/pool.d/guilds.conf" \
+  "${PHP_SYSROOT}/etc/amazon-server.php-sites")" "$(printf '%s\n' "${OWNED_FILES[@]}")"
+if ! grep -qxF 'cli_php=/usr/bin/php8.4' "$PHP_SETTINGS_FILE"; then
+  fail 'settings do not give the CLI /usr/bin/php8.4'
+fi
+
+CASE='5 (CLI at 8.4, re-run)'
+first_digest="$(tree_digest)"
+converge 8.4 8.4 8.4 8.4
+expect_text 'a second converge writes the same files' "$first_digest" "$(tree_digest)"
+expect_calls "apt-get update
+apt-get install -y $(packages_line 8.4)
+$(alternatives_lines 8.4)
+systemctl enable php8.4-fpm
+systemctl restart php8.4-fpm
+$(nginx_lines 8.4 8.4 8.4)"
 
 if [[ "$FAILURES" -eq 0 ]]; then
-  printf 'PASS php-versions: cases 1, 2, 4 and 3\n'
+  printf 'PASS php-versions: cases 1, 2, 4, 3 and 5\n'
 fi
 exit "$FAILURES"

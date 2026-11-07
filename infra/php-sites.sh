@@ -90,40 +90,49 @@ APT_PREFERENCE
   done
 }
 
-# Installing a newer php-cli moves the php alternative to it, so the CLI is
-# set back to the configured version right after the install.
+# The CLI commands php-cli registers as alternatives. Installing a newer
+# php-cli moves each of them to it (abendy/amazon-docs#398).
+PHP_CLI_ALTERNATIVES=(php phar phar.phar)
+
+# Installing a newer php-cli moves the CLI alternatives to it, so they are set
+# back to the configured version right after the install.
 php_install_packages() {
-  local version
+  local version name
   local -a packages=()
   while IFS= read -r version; do
     mapfile -t -O "${#packages[@]}" packages < <(php_packages "$version")
   done < <(php_install_versions)
   apt-get install -y "${packages[@]}"
-  update-alternatives --set php "/usr/bin/php${PHP_CLI_VERSION}"
+  for name in "${PHP_CLI_ALTERNATIVES[@]}"; do
+    update-alternatives --set "$name" "/usr/bin/${name}${PHP_CLI_VERSION}"
+  done
 }
 
-# abendy/amazon-docs#370: every installed version runs in UTC.
+# abendy/amazon-docs#370: every configured version runs in UTC.
 php_write_timezone_ini() {
-  local dir ini
-  for dir in "$PHP_SYSROOT"/etc/php/*/fpm/conf.d "$PHP_SYSROOT"/etc/php/*/cli/conf.d; do
-    [[ -d "$dir" ]] || continue
-    ini="${dir}/zz-amazon-timezone.ini"
-    printf 'date.timezone = UTC\n' > "$ini"
-    own_file "$ini"
-  done
+  local version dir ini
+  while IFS= read -r version; do
+    for dir in "${PHP_SYSROOT}/etc/php/${version}/fpm/conf.d" "${PHP_SYSROOT}/etc/php/${version}/cli/conf.d"; do
+      [[ -d "$dir" ]] || continue
+      ini="${dir}/zz-amazon-timezone.ini"
+      printf 'date.timezone = UTC\n' > "$ini"
+      own_file "$ini"
+    done
+  done < <(php_install_versions)
 }
 
 # CVE-2026-109619 (GHSA-6wmf-4rv5-p3rp): no site uses session upload progress,
 # and the advisory says to keep it off after patching. FPM only: the CLI serves
 # no web requests.
 php_write_security_ini() {
-  local dir ini
-  for dir in "$PHP_SYSROOT"/etc/php/*/fpm/conf.d; do
+  local version dir ini
+  while IFS= read -r version; do
+    dir="${PHP_SYSROOT}/etc/php/${version}/fpm/conf.d"
     [[ -d "$dir" ]] || continue
     ini="${dir}/zz-amazon-security.ini"
     printf '; CVE-2026-109619: no site uses upload progress. Keep off after patching.\nsession.upload_progress.enabled = 0\n' > "$ini"
     own_file "$ini"
-  done
+  done < <(php_install_versions)
 }
 
 php_enable_units() {
@@ -209,7 +218,8 @@ php_place_pools() {
 
 # After nginx reloads onto the new sockets: delete each site's pool from every
 # other version, restart an FPM that lost a pool, and stop and disable an
-# installed FPM with no pools (FPM refuses to start with none). Packages stay.
+# installed FPM with no pools (FPM refuses to start with none). php_purge_unused
+# then removes a version nothing uses.
 php_retire_stale() {
   local dir site version pool
   local -a fpm_versions=() changed=()
@@ -236,4 +246,43 @@ php_retire_stale() {
       systemctl disable "$(php_fpm_unit "$version")"
     fi
   done < <(php_installed_fpm_versions)
+}
+
+# Every php<version> package dpkg still knows, installed or with config left.
+php_dpkg_packages() {
+  dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' 'php*' 2>/dev/null \
+    | awk '$1 != "un" { print $2 }' \
+    | grep -E "^php${1//./\\.}(-|$)" || true
+}
+
+# Versions with a php<version> package in dpkg or a directory under /etc/php.
+php_present_versions() {
+  local dir
+  {
+    dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' 'php*' 2>/dev/null \
+      | awk '$1 != "un" { print $2 }' \
+      | sed -nE 's/^php([0-9]+\.[0-9]+)(-.*)?$/\1/p' || true
+    for dir in "$PHP_SYSROOT"/etc/php/*; do
+      [[ -d "$dir" ]] && basename "$dir"
+    done | grep -xE '[0-9]+\.[0-9]+' || true
+  } | sort -uV
+}
+
+# After php_retire_stale: purge every version no site and not the CLI uses,
+# then delete what converge wrote under its /etc/php, so nothing of it is left.
+# Converge installs it again if a site or the CLI moves back to it.
+php_purge_unused() {
+  local version
+  local -a keep=() packages=()
+  mapfile -t keep < <(php_install_versions)
+  while IFS= read -r version; do
+    if printf '%s\n' "${keep[@]}" | grep -qxF -- "$version"; then
+      continue
+    fi
+    mapfile -t packages < <(php_dpkg_packages "$version")
+    if [[ ${#packages[@]} -gt 0 ]]; then
+      apt-get purge -y "${packages[@]}"
+    fi
+    rm -rf "${PHP_SYSROOT}/etc/php/${version}"
+  done < <(php_present_versions)
 }

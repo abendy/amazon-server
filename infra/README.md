@@ -210,19 +210,20 @@ A failed run leaves the previous marker in place.
   file each (`/etc/apt/preferences.d/amazon-php<version>`, digits only).
 - Each site's pool is `/etc/php/<version>/fpm/pool.d/<site>.conf`, listening on
   `/run/php/php<version>-fpm-<site>.sock`, and nginx renders that socket.
-- `update-alternatives --set php` keeps `/usr/bin/php` on `PHP_CLI_VERSION`, so installing a
-  newer version never moves it.
-- Every installed version gets `zz-amazon-timezone.ini` (`date.timezone = UTC`) in its
+- `update-alternatives --set` keeps `/usr/bin/php`, `/usr/bin/phar` and `/usr/bin/phar.phar` on
+  `PHP_CLI_VERSION`, so installing a newer version never moves them.
+- Every configured version gets `zz-amazon-timezone.ini` (`date.timezone = UTC`) in its
   `fpm/conf.d` and `cli/conf.d`.
-- Every installed version gets `zz-amazon-security.ini` (`session.upload_progress.enabled = 0`,
+- Every configured version gets `zz-amazon-security.ini` (`session.upload_progress.enabled = 0`,
   CVE-2026-109619) in its `fpm/conf.d`. No site uses upload progress.
 - `/etc/amazon-server.php-sites` records what was applied, for status and the cache purge.
 
 To move a site, change its value, land it, and converge. The new pool starts before nginx
 reloads onto its socket. After the reload, converge deletes the site's pool from every other
 version, restarts an FPM that lost a pool, and stops and disables an installed FPM left with no
-pools. Its packages stay installed until close-out removes them. Rolling back is the same move
-with the old value.
+pools. Then it purges every version that no site and not the CLI uses, with its pin and its
+`/etc/php/<version>` folder. Status reports any such version still installed as a problem.
+Rolling back is the same move with the old value; converge installs the old version again.
 
 **First converge per instance.** Instances provisioned before the shim existed carry
 an old full copy of the provisioner. Run the repo copy once; it installs the shim:

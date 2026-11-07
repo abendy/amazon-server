@@ -32,7 +32,7 @@ declare \
   RSVP_PHP_VERSION='8.4' \
   AMPAS_PHP_VERSION='8.4' \
   GUILDS_PHP_VERSION='8.4' \
-  PHP_CLI_VERSION='7.4'
+  PHP_CLI_VERSION='8.4'
 # shellcheck source=infra/php-sites.sh
 source "$(dirname "$SCRIPT_SOURCE")/php-sites.sh"
 
@@ -919,6 +919,7 @@ nginx -t
 systemctl enable --now nginx
 systemctl reload nginx
 php_retire_stale
+php_purge_unused
 
 install_reminder_cron
 write_applied_state

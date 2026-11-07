@@ -18,6 +18,8 @@ MANIFEST_FILE='/var/lib/amazon-server/applied.sha256'
 # The PHP settings converge applied (infra/php-sites.sh, php_write_settings).
 PHP_SETTINGS_FILE='/etc/amazon-server.php-sites'
 PHP_SITES=(rsvp ampas guilds)
+# The CLI alternatives converge keeps on the CLI version (infra/php-sites.sh).
+PHP_CLI_ALTERNATIVES=(php phar phar.phar)
 
 # Manual state that status checks by presence, owner, mode and key names only.
 DB_ENV_FILE='/root/amazon-staging/db.env'
@@ -342,7 +344,8 @@ check_php_version() {
   fi
 }
 
-# Installed php* packages by version, and any configured package not installed.
+# Installed php* packages by version, any configured package not installed, and
+# any installed version no site or the CLI uses (converge purges those).
 check_php_packages() {
   local version count versions package
   local -a installed=() missing=()
@@ -353,7 +356,11 @@ check_php_packages() {
     count="$(printf '%s\n' "${installed[@]}" | grep -c "^php${version}-" || true)"
     versions="$(printf '%s\n' "${installed[@]}" | awk -v prefix="php${version}-" \
       'index($1, prefix) == 1 { print $2 }' | sort -u | paste -sd ' ' -)"
-    php_result info "php${version} packages" "${count} installed: ${versions:-none}"
+    if [[ " ${PHP_SETTING[packages]:-} " == *" php${version}-"* ]]; then
+      php_result info "php${version} packages" "${count} installed: ${versions:-none}"
+    else
+      php_result FAIL "php${version} packages" "${count} installed (${versions:-none}), but no site or the CLI uses PHP ${version}"
+    fi
   done < <(printf '%s\n' "${installed[@]}" | sed -nE 's/^php([0-9]+\.[0-9]+)-.*/\1/p' | sort -uV)
   for package in ${PHP_SETTING[packages]:-}; do
     if ! printf '%s\n' "${installed[@]}" | grep -q "^${package} "; then
@@ -366,15 +373,20 @@ check_php_packages() {
 }
 
 check_php_cli() {
-  local want="${PHP_SETTING[cli_php]:-}" value
-  value="$(update-alternatives --query php 2>/dev/null | awk '$1 == "Value:" { print $2 }' || true)"
-  if [[ -z "$want" ]]; then
-    php_result FAIL 'php cli' "no cli_php in ${PHP_SETTINGS_FILE}"
-  elif [[ "$value" != "$want" ]]; then
-    php_result FAIL 'php cli' "/usr/bin/php is ${value:-not set}, want ${want}"
-  else
-    php_result ok 'php cli' "/usr/bin/php -> ${value}"
+  local cli="${PHP_SETTING[cli_version]:-}" name want value
+  if [[ -z "$cli" ]]; then
+    php_result FAIL 'php cli' "no cli_version in ${PHP_SETTINGS_FILE}"
+    return
   fi
+  for name in "${PHP_CLI_ALTERNATIVES[@]}"; do
+    want="/usr/bin/${name}${cli}"
+    value="$(update-alternatives --query "$name" 2>/dev/null | awk '$1 == "Value:" { print $2 }' || true)"
+    if [[ "$value" != "$want" ]]; then
+      php_result FAIL "${name} cli" "/usr/bin/${name} is ${value:-not set}, want ${want}"
+    else
+      php_result ok "${name} cli" "/usr/bin/${name} -> ${value}"
+    fi
+  done
 }
 
 run_php_checks() {
