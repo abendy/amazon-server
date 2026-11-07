@@ -419,6 +419,22 @@ server {
   include includes/security.conf;
   include includes/rsvp-static.conf;
 
+  # Booking throttle; the zones and route match live in nginx.conf.
+  limit_req zone=rsvp_booking_viewer burst=60 nodelay;
+  limit_req zone=rsvp_booking_peer burst=300 nodelay;
+  limit_req_status 429;
+  limit_req_log_level warn;
+  error_page 429 = @rsvp_booking_throttled;
+
+  # Same envelope as the API's errors so clients show their failure state.
+  # The body is static and carries no credentials, so any origin may read it.
+  location @rsvp_booking_throttled {
+    default_type application/json;
+    add_header Access-Control-Allow-Origin $http_origin always;
+    add_header Retry-After 60 always;
+    return 429 '{"success":false,"code":"RATE_LIMITED","message_text":"Too many requests. Please wait a minute and try again.","field_errors":{}}';
+  }
+
   location ^~ /.well-known/acme-challenge/ {
     root ${STAGING_ACME_DOCROOT};
   }
@@ -467,6 +483,8 @@ server {
     include includes/fastcgi.conf;
     fastcgi_param PATH_INFO $fastcgi_path_info;
     fastcgi_param HTTP_CI_ENV $rsvp_http_ci_env;
+    # The booking throttle's viewer address, for the API's booking signals.
+    fastcgi_param RSVP_VIEWER_ADDR $rsvp_viewer_addr;
 
     fastcgi_buffers 16 16k;
     fastcgi_buffer_size 32k;
@@ -524,6 +542,22 @@ server {
   include includes/security.conf;
   include includes/rsvp-static.conf;
 
+  # Booking throttle; the zones and route match live in nginx.conf.
+  limit_req zone=rsvp_booking_viewer burst=60 nodelay;
+  limit_req zone=rsvp_booking_peer burst=300 nodelay;
+  limit_req_status 429;
+  limit_req_log_level warn;
+  error_page 429 = @rsvp_booking_throttled;
+
+  # Same envelope as the API's errors so clients show their failure state.
+  # The body is static and carries no credentials, so any origin may read it.
+  location @rsvp_booking_throttled {
+    default_type application/json;
+    add_header Access-Control-Allow-Origin $http_origin always;
+    add_header Retry-After 60 always;
+    return 429 '{"success":false,"code":"RATE_LIMITED","message_text":"Too many requests. Please wait a minute and try again.","field_errors":{}}';
+  }
+
   location = /rsvp/consideramazon {
     add_header Access-Control-Allow-Origin "${STAGING_RSVP_EMBED_CORS_ORIGIN}" always;
     add_header Access-Control-Allow-Methods "${STAGING_RSVP_EMBED_CORS_METHODS}" always;
@@ -568,6 +602,8 @@ server {
     include includes/fastcgi.conf;
     fastcgi_param PATH_INFO $fastcgi_path_info;
     fastcgi_param HTTP_CI_ENV $rsvp_http_ci_env;
+    # The booking throttle's viewer address, for the API's booking signals.
+    fastcgi_param RSVP_VIEWER_ADDR $rsvp_viewer_addr;
 
     fastcgi_buffers 16 16k;
     fastcgi_buffer_size 32k;
