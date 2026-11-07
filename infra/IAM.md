@@ -134,7 +134,10 @@ different keys.
 ### What Lightsail backs up on its own
 
 - **Instances:** the automatic-snapshot add-on takes a daily snapshot and keeps the last seven.
-  It is managed in the console, not by this profile.
+  It is set per instance and is off until someone enables it in the console (instance →
+  Snapshots → Automatic snapshots). Neither profile can enable it. Check each instance with
+  `aws lightsail get-auto-snapshots --profile amazon-lightsail-backup --region us-west-2
+  --resource-name <instance>`: an empty `autoSnapshots` list means the add-on is off.
 - **Managed databases:** no scheduled snapshots exist. Point-in-time backup is on by default and
   restores any point in the last seven days to a **new** database. After a restore, point each
   site's `.env` at the new endpoint by hand.
@@ -203,8 +206,9 @@ aws lightsail get-relational-databases --profile amazon-lightsail-backup --regio
 
 ### Take a snapshot before a risky change
 
-Name snapshots `<resource>-<reason>-<UTC timestamp>` so the console list sorts and explains
-itself. Wait for each one to finish before the change starts:
+Use this profile. The Terraform profile is denied `CreateInstanceSnapshot` and
+`GetInstanceSnapshot` by design. Name snapshots `<resource>-<reason>-<UTC timestamp>` so the
+console list sorts and explains itself. Wait for each one to finish before the change starts:
 
 ```bash
 stamp="$(date -u +%Y%m%d-%H%M%S)"
