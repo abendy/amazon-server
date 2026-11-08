@@ -586,8 +586,8 @@ file turns every login into a 500. Converge keeps the file at `root:www-data` `6
 
 ### 5. Install the scheduled jobs
 
-The provisioner owns the only scheduled job. Nothing fails when a job is missing; the work it
-does just stops.
+The provisioner owns the only scheduled job. Nothing on the server fails when a job is missing;
+the work it does just stops. An outside check watches the reminder job ("Dead-man switch" below).
 
 **RSVP reminders (production only).** The job runs hourly and mails each attendee 20 to 24 hours
 before their screening. A missed hour is harmless; a missing job silently skips every reminder.
@@ -621,6 +621,35 @@ binary (`RSVP_PHP_VERSION` in `infra/cloud-init.sh`), so the job moves with the 
 After the next full hour, confirm the job ran: the newest
 `/var/www/html/rsvp/admin/application/logs/reminders-*.log` holds an `Environment: production`
 block for that hour.
+
+**Dead-man switch (production only).** A healthchecks.io check emails the driver when the
+reminder job stops pinging it or reports a failure. After every run the wrapper pings the
+check's URL on exit 0, and `<url>/fail` on any other exit: a failed job, a log directory it
+cannot write, or a log it could not keep or prune (RSVP `docs/DEPLOYMENT.md`). The cron line
+reads the URL at each run from `/etc/amazon-server.reminder-ping-url`, which lives only on the
+instance. Without that file the job runs as before and pings nothing. Anyone holding the URL can
+silence the alert, so keep it out of Git, chat, and shell history.
+
+1. In healthchecks.io, create the check with a one-hour period and copy its ping URL. The grace
+   time is the driver's call: one hour alerts after about two hours without a ping.
+2. Install the URL as root, owned `root:www-data`, mode `640`. The prompt keeps it out of
+   shell history:
+
+   ```bash
+   sudo install -o root -g www-data -m 0640 /dev/null /etc/amazon-server.reminder-ping-url
+   read -r -s -p 'Ping URL: ' ping_url; echo
+   printf '%s\n' "$ping_url" | sudo tee /etc/amazon-server.reminder-ping-url >/dev/null
+   unset ping_url
+   ```
+
+3. Check that the job's user can read it, without printing it:
+
+   ```bash
+   sudo -u www-data test -r /etc/amazon-server.reminder-ping-url && echo readable
+   ```
+
+4. After the next full hour, the check shows a ping. Converge installs the cron line that reads
+   the file; after that, a new or changed file takes effect at the next run without a converge.
 
 ### 6. Flip the existing CDN origins
 
@@ -685,6 +714,7 @@ loudly when it is missing. Each row names the step that recreates it and what
 | Uploaded media | WP `web/app/uploads` | both | No step yet: copy from the instance being replaced | No |
 | Origin TLS certificates | provisioner-owned certificate paths | when HTTPS-only origin is chosen | Step 3 | No |
 | Embed password | `/etc/nginx/.htpasswd` | staging | Step 4 | Empty warns, non-empty passes |
+| Reminder ping URL | `/etc/amazon-server.reminder-ping-url` | production | Step 5 ("Dead-man switch") | No |
 | IPv4 TCP mitigation (CVE-2026-98432) | `/etc/sysctl.d/99-no-mptcp.conf`, `/etc/nftables.d/cve-2026-98432.nft`, `/etc/systemd/system/cve-2026-98432.service` | both | `_docs` `security/20261102-cve-2026-98432-tcp-mitigation/rollout.md` and its script | No; use the rollout's verify list |
 
 Two rules keep this table complete:
