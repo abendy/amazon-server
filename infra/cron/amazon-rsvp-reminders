@@ -6,4 +6,6 @@
 # REMINDER_PING_URL is the dead-man-switch ping URL, read at each run from the
 # untracked /etc/amazon-server.reminder-ping-url (infra/README.md, step 5).
 # A missing file leaves it empty, and the wrapper then pings nothing.
-0 * * * * www-data REMINDER_PING_URL="$(cat /etc/amazon-server.reminder-ping-url 2>/dev/null)" PHP_BIN=${RSVP_PHP_BIN} /var/www/html/rsvp/admin/application/scripts/run_reminder.production.sh >/dev/null 2>&1
+# The wrapper's error lines go to syslog, tagged amazon-rsvp-reminders; its
+# normal output is in the run's own log, so stdout is dropped.
+0 * * * * www-data REMINDER_PING_URL="$(cat /etc/amazon-server.reminder-ping-url 2>/dev/null)" PHP_BIN=${RSVP_PHP_BIN} /var/www/html/rsvp/admin/application/scripts/run_reminder.production.sh 2>&1 >/dev/null | logger -t amazon-rsvp-reminders

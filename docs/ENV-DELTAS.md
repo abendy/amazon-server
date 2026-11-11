@@ -217,12 +217,12 @@ must-serve matrix cannot observe, or values that R4 must ratify before provision
 
 | Site | Environment | Rule | Source and disposition |
 |---|---|---|---|
-| RSVP | staging | Content-Security-Policy host allowlist | `_nginx/ampas-stage/rsvp/security.conf:18-30`; R4 provisions the host-specific policy, and the local harness intentionally emits no CSP. |
-| RSVP | production | Content-Security-Policy host allowlist | `_nginx/ampas-prod/rsvp/security.conf:18-30`; R4 provisions the host-specific policy, and the local harness intentionally emits no CSP. |
+| RSVP | staging | Content-Security-Policy host allowlist | Provisioner-owned: `infra/csp/staging.conf`, installed as `/etc/nginx/snippets/rsvp-staging-csp.conf` on every converge. The local harness intentionally emits no CSP. |
+| RSVP | production | Content-Security-Policy host allowlist | Provisioner-owned: `infra/csp/production.conf`, installed as `/etc/nginx/snippets/rsvp-staging-csp.conf` on every converge. The local harness intentionally emits no CSP. |
 
-The CSP values are environment-specific security policy, not byte-shared serving rules. R4 must
-ratify the host allowlists before provisioning; no local request behavior depends on this omitted
-header.
+The CSP values are environment-specific security policy, not byte-shared serving rules. Change
+them in `infra/csp/` and converge, never on the instance ([`infra/README.md`](../infra/README.md),
+"4. Keep the embed password manual"). No local request behavior depends on the omitted header.
 
 ## Coming-soon state
 

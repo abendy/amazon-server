@@ -27,6 +27,7 @@ AUTH_FILE='/etc/nginx/.htpasswd'
 AMPAS_ROOT='/var/www/html/amazon-studios-ampas'
 GUILDS_ROOT='/var/www/html/amazon-studios-guilds'
 RSVP_ROOT='/var/www/html/rsvp'
+REMINDER_PING_URL_FILE='/etc/amazon-server.reminder-ping-url'
 WP_ENV_KEYS=(
   DB_NAME DB_USER DB_PASSWORD DB_HOST
   WP_ENV WP_HOME WP_SITEURL
@@ -173,6 +174,27 @@ check_auth_file() {
   fi
 }
 
+# check_reminder_ping <environment>: the reminder job's dead-man-switch URL file
+# (infra/README.md, "Dead-man switch"). Production only. Without it the job still
+# runs, but nothing alerts when it stops, so problems warn. Never prints the URL.
+check_reminder_ping() {
+  local environment="$1" file="$REMINDER_PING_URL_FILE" facts
+  if [[ "$environment" != 'production' ]]; then
+    manual_result skip 'reminder ping' 'not checked: only production runs the reminder job'
+  elif [[ ! -f "$file" ]]; then
+    manual_result WARN 'reminder ping' "${file} missing: a stopped reminder job alerts no one"
+  else
+    facts="$(file_facts "$file")"
+    if [[ "$(stat -c '%U:%G %a' "$file")" != 'root:www-data 640' ]]; then
+      manual_result WARN 'reminder ping' "${file} ${facts}; should be root:www-data 640"
+    elif [[ ! -s "$file" ]]; then
+      manual_result WARN 'reminder ping' "${file} ${facts}, empty: the job pings nothing"
+    else
+      manual_result ok 'reminder ping' "${file} ${facts}"
+    fi
+  fi
+}
+
 # origin_ssh_host <repo>: the SSH host (an ~/.ssh/config alias) in the
 # checkout's origin URL, or nothing when the origin is not an SSH remote.
 origin_ssh_host() {
@@ -301,6 +323,7 @@ run_manual_checks() {
     fi
   done
   check_auth_file "$environment"
+  check_reminder_ping "$environment"
   check_ssh_aliases
   check_checkout_owners
 }

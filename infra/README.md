@@ -282,8 +282,9 @@ must be root, mode 600, with the 15 key names), each WordPress `.env` (group
 `www-data`, mode 640, the key names in step 2; a missing `DB_PORT` warns), each `auth.json`
 (missing warns, since only Composer installs read it), the
 staging `.htpasswd` (empty warns without changing the verdict, non-empty passes; not
-checked on production), and the `~ubuntu/.ssh/config` alias each site checkout's
-`origin` uses.
+checked on production), the production reminder ping URL file (missing, empty, or not
+`root:www-data` mode 640 warns; not checked on staging), and the `~ubuntu/.ssh/config` alias
+each site checkout's `origin` uses.
 
 The PHP checks print each site's configured version, pool file and socket, each installed
 version's FPM unit (active and enabled) and its pools, the installed `php*` packages and their
@@ -620,7 +621,8 @@ binary (`RSVP_PHP_VERSION` in `infra/cloud-init.sh`), so the job moves with the 
 
 After the next full hour, confirm the job ran: the newest
 `/var/www/html/rsvp/admin/application/logs/reminders-*.log` holds an `Environment: production`
-block for that hour.
+block for that hour. A run the wrapper refused or could not log leaves its error lines in
+syslog: `journalctl -t amazon-rsvp-reminders`.
 
 **Dead-man switch (production only).** A healthchecks.io check emails the driver when the
 reminder job stops pinging it or reports a failure. After every run the wrapper pings the
@@ -710,11 +712,12 @@ loudly when it is missing. Each row names the step that recreates it and what
 | Site releases | `/var/www/html/{rsvp,amazon-studios-ampas,amazon-studios-guilds}` | both | Step 2 | No |
 | WordPress `.env` files | each WP repo root | both | Step 2 | Group, mode, key names |
 | ACF Composer credentials | each WP repo's `auth.json` | both | Step 2 | Present, else warns |
+| RSVP secrets file | `/var/www/html/rsvp/admin/application/config/<environment>/secrets.json` | both | `docs/ENV-DELTAS.md`, "RSVP secrets file" | No |
 | Writable-path ownership | WP `web/app/uploads`, RSVP `admin/application/logs/` | both | Step 2 | No |
 | Uploaded media | WP `web/app/uploads` | both | No step yet: copy from the instance being replaced | No |
 | Origin TLS certificates | provisioner-owned certificate paths | when HTTPS-only origin is chosen | Step 3 | No |
 | Embed password | `/etc/nginx/.htpasswd` | staging | Step 4 | Empty warns, non-empty passes |
-| Reminder ping URL | `/etc/amazon-server.reminder-ping-url` | production | Step 5 ("Dead-man switch") | No |
+| Reminder ping URL | `/etc/amazon-server.reminder-ping-url` | production | Step 5 ("Dead-man switch") | Owner, mode, empty; else warns |
 | IPv4 TCP mitigation (CVE-2026-98432) | `/etc/sysctl.d/99-no-mptcp.conf`, `/etc/nftables.d/cve-2026-98432.nft`, `/etc/systemd/system/cve-2026-98432.service` | both | `_docs` `security/20261102-cve-2026-98432-tcp-mitigation/rollout.md` and its script | No; use the rollout's verify list |
 
 Two rules keep this table complete:
