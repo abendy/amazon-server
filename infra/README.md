@@ -149,9 +149,12 @@ shell access is granted per release by the driver.
 
 The instances have no `mysql` client. Apply a migration with PHP and the environment's
 CodeIgniter config in the RSVP checkout (`admin/application/config/<environment>/database.php`):
-define `BASEPATH`, include the config, open `mysqli` with `$db["default"]`, check
-`SHOW COLUMNS ... LIKE` first, then run the `ALTER`. Print only column names and added or
-present status, never config values. Migrations run before the checkout pull (RSVP
+define `BASEPATH` and `APPPATH` (`/var/www/html/rsvp/admin/application/`), include the config,
+open `mysqli` with `$db["default"]`. Check the target first (`SHOW COLUMNS ... LIKE` for an
+`ALTER`, `SHOW TABLES LIKE` for a `CREATE TABLE`), then run the statement. Print only column or
+table names and added or present status, never config values. The config reads its login from
+`secrets.json` (`docs/ENV-DELTAS.md`, "RSVP secrets file") once that loader is deployed, and needs
+`APPPATH` to find it. Migrations run before the checkout pull (RSVP
 `docs/DEPLOYMENT.md`). Staging migrations are routine; production waits for the driver's go.
 
 ### Recover a failed first boot
