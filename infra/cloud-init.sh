@@ -248,7 +248,7 @@ apt-get update
 # differs from the one packages.sury.org serves. Later runs find none.
 sury_moves=()
 while read -r sury_package sury_installed; do
-  sury_version="$(apt-cache madison "$sury_package" | awk -F' [|] ' '$3 ~ /packages[.]sury[.]org/ { print $2; exit }')"
+  sury_version="$(apt-cache madison "$sury_package" | awk -F' [|] ' '$3 ~ /packages[.]sury[.]org/ && !found { print $2; found = 1 }')"
   if [[ -n "$sury_version" && "$sury_version" != "$sury_installed" ]]; then
     sury_moves+=("${sury_package}=${sury_version}")
   fi
