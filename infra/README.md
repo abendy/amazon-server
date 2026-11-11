@@ -220,10 +220,17 @@ A failed run leaves the previous marker in place.
 
 To move a site, change its value, land it, and converge. The new pool starts before nginx
 reloads onto its socket. After the reload, converge deletes the site's pool from every other
-version, restarts an FPM that lost a pool, and stops and disables an installed FPM left with no
+version, reloads an FPM that lost a pool, and stops and disables an installed FPM left with no
 pools. Then it purges every version that no site and not the CLI uses, with its pin and its
 `/etc/php/<version>` folder. Status reports any such version still installed as a problem.
 Rolling back is the same move with the old value; converge installs the old version again.
+
+**When converge touches PHP-FPM.** A restart cuts off uploads and long requests in flight, so
+converge fingerprints each version's packages, ini files and pool files before its PHP steps and
+compares them afterwards. It restarts an FPM whose packages or ini changed, or that is not
+running; reloads (`systemctl reload`) one whose pool files alone changed; and leaves the rest
+alone, so a converge that changes nothing about PHP does not touch it. A reload is only as gentle
+as `process_control_timeout`, which stays at PHP's default (`0`): in-flight requests still end.
 
 **PHP package source.** PHP comes from packages.sury.org, where Ondrej Sury is moving the
 `ppa:ondrej/php` packages. Converge installs the `debsuryorg-archive-keyring` package for the

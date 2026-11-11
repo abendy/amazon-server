@@ -238,6 +238,7 @@ APT_SOURCE
 own_file "$PHP_SURY_SOURCE"
 rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list
 
+php_snapshot_fpm_state
 php_write_apt_pins
 
 apt-get update

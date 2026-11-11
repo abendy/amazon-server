@@ -7,6 +7,8 @@
 #   4. RSVP back at 7.4: the 8.4 pools and sockets go away, 8.4 is purged
 #   3. all three at 8.4, CLI on 7.4: the 7.4 FPM is stopped and disabled
 #   5. CLI moved to 8.4: nothing uses 7.4, so it is purged
+#   6. no PHP change: FPM is left alone; a pool edit reloads it; an ini edit
+#      or a stopped FPM restarts it
 # Exit status is the number of failed checks.
 set -Eeuo pipefail
 
@@ -69,10 +71,14 @@ apt-get() {
 }
 
 # dpkg knows a version's whole package set while its FPM binary is installed.
+# A last argument like php8.4* narrows the answer to that version, as dpkg does.
 dpkg-query() {
-  local fpm package
+  local fpm package pattern="${*: -1}"
   for fpm in "${PHP_SYSROOT}"/usr/sbin/php-fpm*; do
     [[ -e "$fpm" ]] || continue
+    if [[ "$pattern" =~ ^php[0-9]+\.[0-9]+\*$ && "$pattern" != "php${fpm##*php-fpm}*" ]]; then
+      continue
+    fi
     for package in $(packages_line "${fpm##*php-fpm}"); do
       printf 'ii  %s\n' "$package"
     done
@@ -83,18 +89,27 @@ update-alternatives() {
   printf 'update-alternatives %s\n' "$*" >> "$CALLS"
 }
 
-# A restart serves exactly the sockets of the version's pools; a stop serves none.
+# A restart or reload serves exactly the sockets of the version's pools; a stop
+# serves none. is-active answers from a running marker and is not recorded.
 systemctl() {
+  if [[ "$1" == is-active ]]; then
+    [[ -e "${WORK_DIR}/active/${3}" ]]
+    return
+  fi
   printf 'systemctl %s\n' "$*" >> "$CALLS"
   local version="${2#php}" pool listen
   version="${version%-fpm}"
-  mkdir -p "${PHP_SYSROOT}/run/php"
+  mkdir -p "${PHP_SYSROOT}/run/php" "${WORK_DIR}/active"
   case "$1" in
-    restart | stop)
+    restart | reload | stop)
       rm -f "${PHP_SYSROOT}/run/php/php${version}-fpm-"*.sock
       ;;
   esac
-  if [[ "$1" == restart ]]; then
+  case "$1" in
+    restart) : > "${WORK_DIR}/active/${2}" ;;
+    stop) rm -f "${WORK_DIR}/active/${2}" ;;
+  esac
+  if [[ "$1" == restart || "$1" == reload ]]; then
     for pool in "${PHP_SYSROOT}/etc/php/${version}/fpm/pool.d/"*.conf; do
       [[ -e "$pool" ]] || continue
       listen="$(awk -F' = ' '$1 == "listen" { print $2 }' "$pool")"
@@ -114,6 +129,7 @@ converge() {  # converge <rsvp> <ampas> <guilds> <cli>
   PHP_CLI_VERSION="$4"
   OWNED_FILES=()
   : > "$CALLS"
+  php_snapshot_fpm_state
   php_write_apt_pins
   apt-get update
   php_install_packages
@@ -241,7 +257,7 @@ tree_digest() {
 
 CASE='wiring'
 expect_text 'cloud-init.sh PHP steps, in order' \
-  "$(printf '%s\n' php_write_apt_pins php_install_packages php_write_timezone_ini \
+  "$(printf '%s\n' php_snapshot_fpm_state php_write_apt_pins php_install_packages php_write_timezone_ini \
     php_write_security_ini php_enable_units php_place_pools php_retire_stale php_purge_unused)" \
   "$(grep -oE '^php_[a-z_]+$' "${INFRA_DIR}/cloud-init.sh")"
 for site in RSVP AMPAS GUILDS; do
@@ -299,10 +315,14 @@ packages=$(packages_line 7.4)"
 
 CASE='1 (all at 7.4, re-run)'
 first_digest="$(tree_digest)"
-first_calls="$(<"$CALLS")"
 converge 7.4 7.4 7.4 7.4
 expect_text 'a second converge writes the same files' "$first_digest" "$(tree_digest)"
-expect_calls "$first_calls"
+# Nothing changed, so the FPM is left alone.
+expect_calls "apt-get update
+apt-get install -y $(packages_line 7.4)
+$(alternatives_lines 7.4)
+systemctl enable php7.4-fpm
+$(nginx_lines 7.4 7.4 7.4)"
 
 # ---- 2. RSVP at 8.4 ---------------------------------------------------------
 
@@ -313,10 +333,9 @@ apt-get install -y $(packages_line 7.4 8.4)
 $(alternatives_lines 7.4)
 systemctl enable php7.4-fpm
 systemctl enable php8.4-fpm
-systemctl restart php7.4-fpm
 systemctl restart php8.4-fpm
 $(nginx_lines 8.4 7.4 7.4)
-systemctl restart php7.4-fpm"
+systemctl reload php7.4-fpm"
 expect_pools 8.4 'rsvp.conf'
 expect_pools 7.4 'ampas.conf guilds.conf'
 expect_file /etc/php/8.4/fpm/pool.d/rsvp.conf "$(pool_text rsvp 8.4)"
@@ -340,7 +359,7 @@ expect_calls "apt-get update
 apt-get install -y $(packages_line 7.4)
 $(alternatives_lines 7.4)
 systemctl enable php7.4-fpm
-systemctl restart php7.4-fpm
+systemctl reload php7.4-fpm
 $(nginx_lines 7.4 7.4 7.4)
 systemctl stop php8.4-fpm
 systemctl disable php8.4-fpm
@@ -377,11 +396,11 @@ expect_present /usr/sbin/php-fpm7.4
 
 CASE='5 (CLI at 8.4)'
 converge 8.4 8.4 8.4 8.4
+# The CLI moves; the 8.4 FPM's packages, ini and pools do not, so it is left alone.
 expect_calls "apt-get update
 apt-get install -y $(packages_line 8.4)
 $(alternatives_lines 8.4)
 systemctl enable php8.4-fpm
-systemctl restart php8.4-fpm
 $(nginx_lines 8.4 8.4 8.4)
 systemctl stop php7.4-fpm
 systemctl disable php7.4-fpm
@@ -413,10 +432,42 @@ expect_calls "apt-get update
 apt-get install -y $(packages_line 8.4)
 $(alternatives_lines 8.4)
 systemctl enable php8.4-fpm
-systemctl restart php8.4-fpm
 $(nginx_lines 8.4 8.4 8.4)"
 
+# ---- 6. what makes converge reload or restart an FPM -----------------------
+
+# Converge rewrites a hand-edited file, and the rewrite is what it acts on.
+quiet_calls="apt-get update
+apt-get install -y $(packages_line 8.4)
+$(alternatives_lines 8.4)
+systemctl enable php8.4-fpm"
+
+CASE='6 (pool file edited)'
+printf 'pm.max_children = 99\n' >> "${PHP_SYSROOT}/etc/php/8.4/fpm/pool.d/ampas.conf"
+converge 8.4 8.4 8.4 8.4
+expect_calls "${quiet_calls}
+systemctl reload php8.4-fpm
+$(nginx_lines 8.4 8.4 8.4)"
+expect_file /etc/php/8.4/fpm/pool.d/ampas.conf "$(pool_text ampas 8.4)"
+expect_sockets '/run/php/php8.4-fpm-ampas.sock /run/php/php8.4-fpm-guilds.sock /run/php/php8.4-fpm-rsvp.sock'
+
+CASE='6 (ini file edited)'
+printf 'date.timezone = America/Los_Angeles\n' > "${PHP_SYSROOT}/etc/php/8.4/fpm/conf.d/zz-amazon-timezone.ini"
+converge 8.4 8.4 8.4 8.4
+expect_calls "${quiet_calls}
+systemctl restart php8.4-fpm
+$(nginx_lines 8.4 8.4 8.4)"
+expect_file /etc/php/8.4/fpm/conf.d/zz-amazon-timezone.ini 'date.timezone = UTC'
+
+CASE='6 (FPM stopped)'
+systemctl stop php8.4-fpm
+converge 8.4 8.4 8.4 8.4
+expect_calls "${quiet_calls}
+systemctl restart php8.4-fpm
+$(nginx_lines 8.4 8.4 8.4)"
+expect_sockets '/run/php/php8.4-fpm-ampas.sock /run/php/php8.4-fpm-guilds.sock /run/php/php8.4-fpm-rsvp.sock'
+
 if [[ "$FAILURES" -eq 0 ]]; then
-  printf 'PASS php-versions: cases 1, 2, 4, 3 and 5\n'
+  printf 'PASS php-versions: cases 1, 2, 4, 3, 5 and 6\n'
 fi
 exit "$FAILURES"

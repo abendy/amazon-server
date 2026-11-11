@@ -194,9 +194,66 @@ php_write_settings() {
   own_file "$PHP_SETTINGS_FILE"
 }
 
-# Before nginx renders: each site's pool goes in its own version's pool.d and
-# every FPM with pools restarts, so the new sockets exist before nginx points
-# at them. The old version keeps a moved site's pool until php_retire_stale.
+# abendy/amazon-docs#397: a restart cuts off uploads and long requests in
+# flight, so converge restarts an FPM only when its packages or ini changed, or
+# when it is not running; a change to pool files alone gets a graceful reload;
+# nothing changed, nothing happens. Fingerprints taken before any PHP step
+# (php_snapshot_fpm_state) are compared with the state after the writes.
+declare -A PHP_FPM_RESTART_BEFORE=()
+declare -A PHP_FPM_POOLS_BEFORE=()
+
+# Packages, their versions, php.ini, php-fpm.conf and conf.d: a change needs a restart.
+php_fpm_restart_state() {
+  local etc="${PHP_SYSROOT}/etc/php/${1}/fpm" file
+  {
+    dpkg-query -W -f '${Package} ${Version}\n' "php${1}*" 2>/dev/null || true
+    for file in "${etc}/php.ini" "${etc}/php-fpm.conf" "${etc}"/conf.d/*.ini; do
+      if [[ -f "$file" ]]; then
+        printf '%s\n' "$file"
+        cat "$file"
+      fi
+    done
+  } | sha256sum
+}
+
+# The pool files: a change needs only a reload.
+php_fpm_pool_state() {
+  local file
+  for file in "$(php_pool_dir "$1")"/*.conf; do
+    if [[ -f "$file" ]]; then
+      printf '%s\n' "$file"
+      cat "$file"
+    fi
+  done | sha256sum
+}
+
+php_snapshot_fpm_state() {
+  local dir version
+  for dir in "$PHP_SYSROOT"/etc/php/*/fpm; do
+    [[ -d "$dir" ]] || continue
+    version="${dir#"$PHP_SYSROOT"/etc/php/}"
+    version="${version%/fpm}"
+    PHP_FPM_RESTART_BEFORE["$version"]="$(php_fpm_restart_state "$version")"
+    PHP_FPM_POOLS_BEFORE["$version"]="$(php_fpm_pool_state "$version")"
+  done
+}
+
+# php_apply_fpm <version>: restart, reload or leave one FPM, by what changed.
+php_apply_fpm() {
+  local version="$1" unit
+  unit="$(php_fpm_unit "$version")"
+  if ! systemctl is-active --quiet "$unit" \
+    || [[ "$(php_fpm_restart_state "$version")" != "${PHP_FPM_RESTART_BEFORE[$version]:-}" ]]; then
+    systemctl restart "$unit"
+  elif [[ "$(php_fpm_pool_state "$version")" != "${PHP_FPM_POOLS_BEFORE[$version]:-}" ]]; then
+    systemctl reload "$unit"
+  fi
+}
+
+# Before nginx renders: each site's pool goes in its own version's pool.d, and
+# each FPM with pools restarts or reloads as php_apply_fpm decides, so the new
+# sockets exist before nginx points at them. The old version keeps a moved
+# site's pool until php_retire_stale.
 php_place_pools() {
   local dir site version
   for dir in "$PHP_SYSROOT"/etc/php/*/fpm/pool.d; do
@@ -212,12 +269,12 @@ php_place_pools() {
   done
   php_write_settings
   while IFS= read -r version; do
-    systemctl restart "$(php_fpm_unit "$version")"
+    php_apply_fpm "$version"
   done < <(php_fpm_versions)
 }
 
 # After nginx reloads onto the new sockets: delete each site's pool from every
-# other version, restart an FPM that lost a pool, and stop and disable an
+# other version, reload an FPM that lost a pool, and stop and disable an
 # installed FPM with no pools (FPM refuses to start with none). php_purge_unused
 # then removes a version nothing uses.
 php_retire_stale() {
@@ -239,7 +296,7 @@ php_retire_stale() {
   while IFS= read -r version; do
     if printf '%s\n' "${fpm_versions[@]}" | grep -qxF -- "$version"; then
       if printf '%s\n' "${changed[@]}" | grep -qxF -- "$version"; then
-        systemctl restart "$(php_fpm_unit "$version")"
+        systemctl reload "$(php_fpm_unit "$version")"
       fi
     else
       systemctl stop "$(php_fpm_unit "$version")"
