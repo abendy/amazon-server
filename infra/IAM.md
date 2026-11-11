@@ -1,11 +1,17 @@
 # IAM for Lightsail Terraform and backups
 
 Create a dedicated IAM group and user for this module. The Terraform profile manages only the
-Lightsail instance, static IP, attachment, and public ports in this directory. It does not manage
-CDN distributions, DNS, managed databases, IAM, or application credentials.
+Lightsail instance, static IP, attachment, and public ports in this directory. Terraform does not
+manage CDN distributions, DNS, managed databases, IAM, or application credentials.
+
+The same profile also carries a few operator actions on the CDN distributions, outside Terraform:
+reading distributions, certificates, and distribution metrics, changing cache behaviors, and
+resetting the cache. The CLI is the reliable way to change cache behaviors, because the Lightsail
+console can drop path rules and the query-string allow-list on save.
 
 The policy below names the AWS actions used by HashiCorp AWS provider `6.50.0` for this module:
 instance/static-IP/public-port lifecycle calls, their operation and state reads, and tag updates.
+It adds the distribution actions above.
 `sts:GetCallerIdentity` lets the provider establish the caller account during configuration. No
 service-wide action wildcard is present. AWS requires `Resource: "*"` for the create actions and
 for these Lightsail reads; the action list is the least-privilege boundary for this profile.
@@ -24,6 +30,7 @@ name such as `amazon-lightsail-staging-terraform`.
       "Effect": "Allow",
       "Action": [
         "lightsail:AllocateStaticIp",
+        "lightsail:AttachCertificateToDistribution",
         "lightsail:AttachStaticIp",
         "lightsail:CloseInstancePublicPorts",
         "lightsail:CreateInstances",
@@ -31,8 +38,10 @@ name such as `amazon-lightsail-staging-terraform`.
         "lightsail:DetachStaticIp",
         "lightsail:PutInstancePublicPorts",
         "lightsail:ReleaseStaticIp",
+        "lightsail:ResetDistributionCache",
         "lightsail:TagResource",
-        "lightsail:UntagResource"
+        "lightsail:UntagResource",
+        "lightsail:UpdateDistribution"
       ],
       "Resource": "*"
     },
@@ -40,6 +49,9 @@ name such as `amazon-lightsail-staging-terraform`.
       "Sid": "LightsailStagingRead",
       "Effect": "Allow",
       "Action": [
+        "lightsail:GetCertificates",
+        "lightsail:GetDistributions",
+        "lightsail:GetDistributionMetricData",
         "lightsail:GetInstance",
         "lightsail:GetInstanceAccessDetails",
         "lightsail:GetInstancePortStates",
@@ -63,8 +75,9 @@ The action set follows the provider's [Lightsail instance resource](https://gith
 [static-IP resource](https://github.com/hashicorp/terraform-provider-aws/blob/v6.50.0/internal/service/lightsail/static_ip.go),
 and [attachment resource](https://github.com/hashicorp/terraform-provider-aws/blob/v6.50.0/internal/service/lightsail/static_ip_attachment.go).
 AWS's [Lightsail authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonlightsail.html)
-defines the action/resource limits. This policy deliberately contains no distribution, domain,
-database, key-pair, or IAM actions.
+defines the action/resource limits. The distribution actions cover operator CDN work only: no
+action creates or deletes a distribution. The policy contains no domain, database, key-pair, or
+IAM actions.
 
 `lightsail:GetInstanceAccessDetails` is not a Terraform action: it issues the short-lived SSH
 key-and-certificate pairs used for post-apply instance access (see the "Instance access" section
