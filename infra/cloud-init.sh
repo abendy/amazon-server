@@ -224,6 +224,12 @@ php_write_apt_pins
 apt-get update
 php_install_packages
 php_write_timezone_ini
+
+# The host runs in UTC, like PHP and the databases. Pacific time belongs in code
+# that names it, never in a server default.
+if [[ "$(timedatectl show -p Timezone --value 2>/dev/null || true)" != 'Etc/UTC' ]]; then
+  timedatectl set-timezone Etc/UTC
+fi
 php_write_security_ini
 
 # Composer comes from the phar installer, never apt: the Ubuntu composer

@@ -240,14 +240,14 @@ Use the ref that `/etc/amazon-server.ref` names. Every later run is
 **Status.** `sudo amazon-server-converge status` changes nothing. It prints the
 environment, the ref, the applied commit and time, the remote tip (`git ls-remote`),
 the checkout commit and whether it is clean, the manifest check, the PHP checks, the OS patch
-checks (see "OS patches"), and the manual checks. `status --short` prints one line for probes.
+checks (see "OS patches"), the time zone checks, and the manual checks. `status --short` prints one line for probes.
 The verdict:
 
 | Verdict | Meaning | Exit |
 |---|---|---|
 | `CURRENT` | Applied commit is the remote tip for this environment, every owned file matches, manual checks pass | 0 |
 | `BEHIND` | Applied commit is not the remote tip (or the remote could not be read) | 1 |
-| `DRIFT` | An owned file changed or is missing, the manifest is missing or unusable, the marker names another environment or none, the checkout is dirty, automatic security updates are off, or a manual check fails | 1 |
+| `DRIFT` | An owned file changed or is missing, the manifest is missing or unusable, the marker names another environment or none, the checkout is dirty, automatic security updates are off, a time zone is not UTC, or a manual check fails | 1 |
 | `UNAPPLIED` | No `/etc/amazon-server.applied` marker | 1 |
 
 `UNAPPLIED` wins over `DRIFT`, and `DRIFT` wins over `BEHIND`.
@@ -273,6 +273,14 @@ versions, and where `/usr/bin/php` points. Any of these is `DRIFT`: a missing po
 listening elsewhere, an absent socket, a site's pool left under another version, a used FPM
 not running and enabled, an unused installed FPM not stopped and disabled, a configured
 package not installed, or a CLI on another version.
+
+**Time zones.** Everything runs in UTC; Pacific time belongs in code that names it, never in a
+server default. Converge writes `date.timezone = UTC` for PHP (above) and sets the host to
+`Etc/UTC` when it differs. `status` prints the host zone, the CLI's PHP zone, each FPM version's
+`date.timezone`, and each site database's global and session zones, read with that site's own
+login (WordPress `.env`; RSVP's `secrets.json`, or an older `database.php`). Any zone other than
+UTC is `DRIFT`. A database it cannot read only warns. The managed databases are outside
+Terraform, so a non-UTC database zone is a Lightsail parameter change for the driver.
 
 **Hand edits show as drift.** A hand edit to an owned file reads as `DRIFT` until the
 change lands in this repo, and the next converge overwrites it. Change the repo, land

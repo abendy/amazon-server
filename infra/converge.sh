@@ -542,6 +542,149 @@ run_patch_checks() {
   check_kernels
 }
 
+# ---- Time zones ------------------------------------------------------------
+# PHP, the host and the databases all run in UTC. Pacific time belongs in code
+# that names it, never in a server default. Any other zone is drift.
+
+ZONE_LINES=()
+ZONE_PROBLEMS=()
+ZONE_WARNED=0
+
+# zone_result <ok|WARN|FAIL> <label> <detail>; FAIL is drift.
+zone_result() {
+  ZONE_LINES+=("$(printf '  %-4s  %-16s %s' "$1" "$2" "$3")")
+  case "$1" in
+    FAIL) ZONE_PROBLEMS+=("${2}: ${3}") ;;
+    WARN) ZONE_WARNED=$((ZONE_WARNED + 1)) ;;
+  esac
+}
+
+is_utc() {
+  case "$1" in
+    UTC | Etc/UTC | +00:00) return 0 ;;
+  esac
+  return 1
+}
+
+# check_zone <label> <zone>
+check_zone() {
+  if is_utc "$2"; then
+    zone_result ok "$1" "$2"
+  else
+    zone_result FAIL "$1" "${2:-unknown}, want UTC"
+  fi
+}
+
+# db_zones <wp|rsvp> <path>: "<global> <session> <system>" from the database
+# behind a site's own login, or "error <reason>". The login is read from the
+# site's .env, or RSVP's secrets.json beside its database.php (an older
+# database.php holds it literally). Nothing prints a credential.
+db_zones() {
+  php -d display_errors=0 -d log_errors=0 -- "$1" "$2" <<'PHP' 2>/dev/null || printf 'error php\n'
+<?php
+[, $kind, $path] = $argv + [null, '', ''];
+$login = null;
+if ($kind === 'wp') {
+    $env = [];
+    foreach ((is_readable($path) ? file($path, FILE_IGNORE_NEW_LINES) : []) as $line) {
+        if (preg_match('/^\s*([A-Z_]+)\s*=\s*(.*)$/', $line, $m)) {
+            $value = trim($m[2]);
+            if (strlen($value) >= 2 && ($value[0] === "'" || $value[0] === '"') && substr($value, -1) === $value[0]) {
+                $value = substr($value, 1, -1);
+            }
+            $env[$m[1]] = $value;
+        }
+    }
+    if (isset($env['DB_HOST'], $env['DB_USER'], $env['DB_PASSWORD'], $env['DB_NAME'])) {
+        // Like WordPress: DB_HOST, with any port in it; DB_PORT is not read.
+        $login = [$env['DB_HOST'], $env['DB_USER'], $env['DB_PASSWORD'], $env['DB_NAME'], 3306];
+    }
+} else {
+    $secrets = dirname($path) . '/secrets.json';
+    if (is_readable($secrets)) {
+        $s = json_decode((string) file_get_contents($secrets), true);
+        if (is_array($s) && isset($s['db_hostname'], $s['db_username'], $s['db_password'], $s['db_database'])) {
+            $login = [$s['db_hostname'], $s['db_username'], $s['db_password'], $s['db_database'], 3306];
+        }
+    } elseif (is_readable($path)) {
+        define('BASEPATH', '/nonexistent/');
+        $db = [];
+        try {
+            include $path;
+        } catch (Throwable $e) {
+            $db = [];
+        }
+        $d = $db['default'] ?? [];
+        if (isset($d['hostname'], $d['username'], $d['password'], $d['database'])) {
+            $login = [$d['hostname'], $d['username'], $d['password'], $d['database'], (int) ($d['port'] ?? 3306)];
+        }
+    }
+}
+if ($login === null) {
+    exit("error no-login\n");
+}
+[$host, $user, $pass, $name, $port] = $login;
+if (preg_match('/^(.+):(\d+)$/', $host, $m)) {
+    [$host, $port] = [$m[1], (int) $m[2]];
+}
+mysqli_report(MYSQLI_REPORT_OFF);
+$c = mysqli_init();
+$c->options(MYSQLI_OPT_CONNECT_TIMEOUT, 5);
+if (!@$c->real_connect($host, $user, $pass, $name, $port)) {
+    exit('error connect-' . mysqli_connect_errno() . "\n");
+}
+$r = $c->query('SELECT @@global.time_zone, @@session.time_zone, @@system_time_zone');
+$row = $r ? $r->fetch_row() : null;
+echo $row ? implode(' ', $row) . "\n" : "error query\n";
+PHP
+}
+
+check_host_zone() {
+  check_zone 'host' "$(timedatectl show -p Timezone --value 2>/dev/null || true)"
+}
+
+check_php_zones() {
+  local version site
+  local -a versions=()
+  check_zone 'php cli' "$(php -r 'echo date_default_timezone_get();' 2>/dev/null || true)"
+  for site in "${PHP_SITES[@]}"; do
+    version="${PHP_SETTING[${site}_version]:-}"
+    if [[ -n "$version" && " ${versions[*]} " != *" ${version} "* ]]; then
+      versions+=("$version")
+    fi
+  done
+  for version in "${versions[@]}"; do
+    check_zone "php${version} fpm" "$("php-fpm${version}" -i 2>/dev/null \
+      | awk -F' => ' '$1 == "date.timezone" { print $2; exit }' || true)"
+  done
+}
+
+# check_db_zone <site> <wp|rsvp> <path>
+check_db_zone() {
+  local site="$1" global session system
+  read -r global session system < <(db_zones "$2" "$3") || true
+  if [[ "$global" == error ]]; then
+    zone_result WARN "${site} db" "not read (${session:-unknown}): no login or no connection"
+    return
+  fi
+  [[ "$global" == SYSTEM ]] && global="$system"
+  [[ "$session" == SYSTEM ]] && session="$system"
+  if is_utc "$global" && is_utc "$session"; then
+    zone_result ok "${site} db" "global ${global}, session ${session}"
+  else
+    zone_result FAIL "${site} db" "global ${global:-unknown}, session ${session:-unknown}, want UTC: a Lightsail parameter change"
+  fi
+}
+
+run_zone_checks() {
+  local environment="$1"
+  check_host_zone
+  check_php_zones
+  check_db_zone rsvp rsvp "${RSVP_ROOT}/admin/application/config/${environment}/database.php"
+  check_db_zone ampas wp "${AMPAS_ROOT}/.env"
+  check_db_zone guilds wp "${GUILDS_ROOT}/.env"
+}
+
 converge_status() {
   local short="$1"
   local environment ref key value line verdict
@@ -632,6 +775,10 @@ converge_status() {
   for line in "${PATCH_PROBLEMS[@]}"; do
     drift_reasons+=("$line")
   done
+  run_zone_checks "$environment"
+  for line in "${ZONE_PROBLEMS[@]}"; do
+    drift_reasons+=("$line")
+  done
 
   if [[ -z "$applied_sha" ]]; then
     verdict='UNAPPLIED'
@@ -649,10 +796,10 @@ converge_status() {
     for line in "${drift_reasons[@]}"; do
       reasons+="; ${line}"
     done
-    printf '%s: %s (applied %s, remote %s, owned %d changed %d missing, manual %d failed %d warned, patches %d failed %d warned)%s\n' \
+    printf '%s: %s (applied %s, remote %s, owned %d changed %d missing, manual %d failed %d warned, patches %d failed %d warned, zones %d failed %d warned)%s\n' \
       "$environment" "$verdict" "${applied_short:-none}" "${remote_short:-unreachable}" \
       "${#changed_files[@]}" "${#missing_files[@]}" "$MANUAL_FAILED" "$MANUAL_WARNED" \
-      "${#PATCH_PROBLEMS[@]}" "$PATCH_WARNED" "$reasons"
+      "${#PATCH_PROBLEMS[@]}" "$PATCH_WARNED" "${#ZONE_PROBLEMS[@]}" "$ZONE_WARNED" "$reasons"
   else
     printf '%-12s %s\n' environment "$environment" ref "$ref"
     if [[ -n "$applied_sha" ]]; then
@@ -683,6 +830,8 @@ converge_status() {
     printf '%s\n' "${PHP_LINES[@]}"
     printf '%-12s %d failed, %d warned\n' patches "${#PATCH_PROBLEMS[@]}" "$PATCH_WARNED"
     printf '%s\n' "${PATCH_LINES[@]}"
+    printf '%-12s %d failed, %d warned\n' zones "${#ZONE_PROBLEMS[@]}" "$ZONE_WARNED"
+    printf '%s\n' "${ZONE_LINES[@]}"
     printf '%-12s %d failed, %d warned\n' manual "$MANUAL_FAILED" "$MANUAL_WARNED"
     printf '%s\n' "${MANUAL_LINES[@]}"
     for line in "${drift_reasons[@]}"; do
