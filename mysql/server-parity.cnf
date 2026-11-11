@@ -1,9 +1,10 @@
 # Local MySQL settings that match the staging and production databases.
 #
-# Staging and production run managed MySQL 8.0.45 for all three sites (rsvp,
-# AMPAS, Guilds). These are the server values measured there that differ from
-# the mysql:8.0.45 image's defaults. Each site's local database container
-# mounts this file; keep it in step with the servers, never ahead of them.
+# Staging and production run managed MySQL 8.0 for all three sites (rsvp,
+# AMPAS, Guilds); the patch level varies by database. These are the server
+# values measured there that differ from the mysql:8.0.45 image's defaults.
+# Each site's local database container mounts this file; keep it and the image
+# in step with the servers, never ahead of the oldest of them.
 
 [mysqld]
 sql_mode                      = NO_ENGINE_SUBSTITUTION
