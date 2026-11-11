@@ -39,16 +39,18 @@ WordPress. Trailers upload through WP Media, so these must hold on every re-prov
 
 ## Scheduled jobs
 
-Converge installs the reminder cron on production only: `install_reminder_cron` in
-[`infra/cloud-init.sh`](../infra/cloud-init.sh) refuses any other environment
-([`infra/README.md`](../infra/README.md), "RSVP reminders (production only)"). It never removes a
-cron file it did not install, so a hand-made one would survive; staging has none.
+Converge installs the RSVP reminder and confirmation crons on production only:
+`install_reminder_cron` and `install_confirmation_cron` in
+[`infra/cloud-init.sh`](../infra/cloud-init.sh) refuse any other environment
+([`infra/README.md`](../infra/README.md), "RSVP reminders (production only)" and "RSVP
+confirmation retries (production only)"). Neither removes a cron file it did not install, so a
+hand-made one would survive; staging has none.
 
-| Environment | RSVP reminder emails (hourly) |
-|---|---|
-| local | none; run `run_reminder.docker.sh` by hand, and its mail lands in Mailpit |
-| staging | none; reminders stay off |
-| production | `/etc/cron.d/amazon-rsvp-reminders` |
+| Environment | RSVP reminder emails (hourly) | RSVP confirmation retries (every 15 minutes) |
+|---|---|---|
+| local | none; run `run_reminder.docker.sh` by hand, and its mail lands in Mailpit | none; confirmations send inside the RSVP request |
+| staging | none; reminders stay off | none |
+| production | `/etc/cron.d/amazon-rsvp-reminders` | `/etc/cron.d/amazon-rsvp-confirmations` |
 
 ## Outgoing mail
 

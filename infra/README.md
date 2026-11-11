@@ -587,8 +587,9 @@ file turns every login into a 500. Converge keeps the file at `root:www-data` `6
 
 ### 5. Install the scheduled jobs
 
-The provisioner owns the only scheduled job. Nothing on the server fails when a job is missing;
-the work it does just stops. An outside check watches the reminder job ("Dead-man switch" below).
+The provisioner owns both scheduled jobs, the RSVP reminders and the RSVP confirmation retries.
+Nothing on the server fails when a job is missing; the work it does just stops. An outside check
+watches the reminder job ("Dead-man switch" below).
 
 **RSVP reminders (production only).** The job runs hourly and mails each attendee 20 to 24 hours
 before their screening. A missed hour is harmless; a missing job silently skips every reminder.
@@ -623,6 +624,34 @@ After the next full hour, confirm the job ran: the newest
 `/var/www/html/rsvp/admin/application/logs/reminders-*.log` holds an `Environment: production`
 block for that hour. A run the wrapper refused or could not log leaves its error lines in
 syslog: `journalctl -t amazon-rsvp-reminders`.
+
+**RSVP confirmation retries (production only).** RSVP sends each confirmation inside the RSVP
+request. This job sends the ones that did not go out: refused temporarily by the mail server before
+it took the message (a 4xx reply, or none), or never sent because the request's send never ran. A
+permanent refusal (5xx) is not retried. It picks RSVPs 10 minutes to 48 hours old, for visible
+screenings that have not started, and rechecks each one just before sending (RSVP
+`docs/DEPLOYMENT.md`, "Outgoing mail"). It runs
+every 15 minutes, at :05, :20, :35 and :50, so it never starts with the hourly reminder job. A
+missed run is harmless; a missing job leaves those confirmations unsent.
+
+Converge installs `infra/cron/amazon-rsvp-confirmations` as
+`/etc/cron.d/amazon-rsvp-confirmations` (root, 0644) under the same three conditions as the
+reminder cron, for `/var/www/html/rsvp/admin/application/scripts/run_confirmations.production.sh`.
+Otherwise it prints a confirmation-cron warning and leaves any existing file as it is.
+
+Dry-run first, as the job's user. A dry run sends nothing and writes nothing:
+
+```bash
+rsvp_php="$(awk -F= '$1 == "rsvp_php" { print $2 }' /etc/amazon-server.php-sites)"
+sudo -u www-data HTTP_CI_ENV=production "$rsvp_php" \
+  /var/www/html/rsvp/admin/index.php confirmations send_due dry_run
+```
+
+After the next quarter hour, confirm the job ran: the newest
+`/var/www/html/rsvp/admin/application/logs/confirmations-*.log` holds an `Environment: production`
+block and a `Confirmations:` summary. Every run keeps a log, so about 96 a day, for 30 days. A run
+the wrapper refused or could not log leaves its error lines in syslog:
+`journalctl -t amazon-rsvp-confirmations`. This job pings no outside monitor.
 
 **Dead-man switch (production only).** A healthchecks.io check emails the driver when the
 reminder job stops pinging it or reports a failure. After every run the wrapper pings the
@@ -697,7 +726,8 @@ values before switching, and rollback is restoring them.
 ## Host state outside Git
 
 Converge rebuilds the nginx tree, packages, PHP-FPM pools, logrotate rule, docroot skeletons,
-the RSVP CSP snippet (`infra/csp/`), and on production the RSVP reminder cron (`infra/cron/`).
+the RSVP CSP snippet (`infra/csp/`), and on production the RSVP reminder and confirmation crons
+(`infra/cron/`).
 Those are provisioner-owned and listed in the applied manifest ("Converge and status").
 Everything below lives only on the instance. A replaced instance loses it, and nothing fails
 loudly when it is missing. Each row names the step that recreates it and what

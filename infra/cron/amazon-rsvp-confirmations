@@ -1,0 +1,11 @@
+# Provisioner-owned: infra/cloud-init.sh renders this file to
+# /etc/cron.d/amazon-rsvp-confirmations on production only, once the RSVP wrapper
+# below is executable. Change it here and converge, not on the instance.
+# RSVP confirmation retries: sends the confirmations the RSVP request left unsent
+# (a temporary refusal before the message data, or a send that never ran). Every 15
+# minutes, at :05, :20, :35 and :50, so it never starts with the hourly reminder
+# job. Runs as www-data, which owns the RSVP log directory.
+# PHP_BIN is RSVP's configured PHP version (RSVP_PHP_VERSION in cloud-init.sh).
+# The wrapper's error lines go to syslog, tagged amazon-rsvp-confirmations; its
+# normal output is in the run's own log, so stdout is dropped.
+5-59/15 * * * * www-data PHP_BIN=${RSVP_PHP_BIN} /var/www/html/rsvp/admin/application/scripts/run_confirmations.production.sh 2>&1 >/dev/null | logger -t amazon-rsvp-confirmations

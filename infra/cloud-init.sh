@@ -895,6 +895,37 @@ install_reminder_cron() {
   fi
 }
 
+# The RSVP confirmation job, every 15 minutes, mails the confirmations the RSVP
+# request left unsent, so like the reminder job it runs on production only, and
+# only once the RSVP release with its wrapper is in place: executable and free
+# of the old /opt/bitnami paths. Otherwise the run warns and leaves any existing
+# file as it is.
+install_confirmation_cron() {
+  local cron_source="$AMAZON_SERVER_ROOT/infra/cron/amazon-rsvp-confirmations"
+  local cron_file='/etc/cron.d/amazon-rsvp-confirmations'
+  local wrapper="$STAGING_RSVP_DOCROOT/admin/application/scripts/run_confirmations.production.sh"
+
+  if [[ "$AMAZON_SERVER_ENVIRONMENT" != 'production' ]]; then
+    printf 'warning: confirmation cron not installed: environment is %s, not production\n' \
+      "$AMAZON_SERVER_ENVIRONMENT" >&2
+  elif [[ ! -x "$wrapper" ]]; then
+    printf 'warning: confirmation cron not installed: %s is missing or not executable\n' \
+      "$wrapper" >&2
+  elif grep -qF -- '/opt/bitnami' "$wrapper" || [[ $? -ne 1 ]]; then
+    printf 'warning: confirmation cron not installed: %s uses /opt/bitnami paths or cannot be read\n' \
+      "$wrapper" >&2
+  else
+    # The wrapper runs PHP_BIN, so the job follows RSVP's configured version.
+    local rendered_cron
+    rendered_cron="$(mktemp)"
+    RSVP_PHP_BIN="/usr/bin/php$(php_site_version rsvp)" \
+      envsubst "\${RSVP_PHP_BIN}" < "$cron_source" > "$rendered_cron"
+    install -o root -g root -m 0644 "$rendered_cron" "$cron_file"
+    rm -f "$rendered_cron"
+    own_file "$cron_file"
+  fi
+}
+
 # Runs only after nginx accepted and reloaded the new config, so a failed run
 # leaves the previous marker in place. The manifest covers the rsynced and
 # rendered nginx tree (minus the manual .htpasswd and the snippets/ directory
@@ -981,4 +1012,5 @@ php_retire_stale
 php_purge_unused
 
 install_reminder_cron
+install_confirmation_cron
 write_applied_state
