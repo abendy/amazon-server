@@ -9,7 +9,7 @@ services:
   nginx:
     container_name: amazon-server-nginx
     platform: linux/arm64
-    image: nginx:1.27-alpine
+    image: nginx:1.30-alpine
     ports:
       - "80:80"
     volumes:
