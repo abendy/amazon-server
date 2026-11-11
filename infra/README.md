@@ -497,7 +497,11 @@ compile and deploy the assets; remove Node from cloud-init once they do.
 write access only where the applications write. Create `web/app/uploads` per WP site
 and `chown -R www-data:www-data` it; give RSVP's runtime log directory
 (`admin/application/logs/`) to `www-data` the same way. Leave everything else
-read-only to `www-data`.
+read-only to `www-data`. Converge keeps the folders it creates for the checkouts (the RSVP
+root, `public/`, `public/consideramazon/`, each WP `web/`) owned by `ubuntu`, so git, Composer
+and the embed apply all run as `ubuntu`. `status` fails on a checkout folder not owned by
+`ubuntu`, a writable path not owned by `www-data`, or any root-owned file in a checkout (left by
+a deploy run as root).
 
 **Site environment files.** Author each site's env file on the instance by hand from
 the `db.env` handoff (step 1). A WP `.env` needs exactly these names (values never

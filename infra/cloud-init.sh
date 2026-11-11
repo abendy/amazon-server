@@ -331,15 +331,20 @@ install -o root -g root -m 0644 \
   "$AMAZON_SERVER_ROOT/infra/csp/${AMAZON_SERVER_ENVIRONMENT}.conf" "$STAGING_CSP_INCLUDE"
 own_file "$STAGING_CSP_INCLUDE"
 
+# Checkout folders belong to the deploy user, so git and Composer run as ubuntu
+# can replace what they hold. PHP-FPM (www-data) only reads them; it writes only
+# to web/app/uploads and RSVP's admin/application/logs ("Writable paths" in
+# infra/README.md). install -d also resets an existing folder's owner, so each
+# converge undoes drift.
 for docroot in \
   "$STAGING_RSVP_DOCROOT" \
   "$STAGING_RSVP_PUBLIC_DOCROOT" \
   "$STAGING_RSVP_EMBED_DOCROOT" \
   "$STAGING_AMPAS_DOCROOT" \
-  "$STAGING_GUILDS_DOCROOT" \
-  "$STAGING_ACME_DOCROOT"; do
-  install -d -o www-data -g www-data -m 0755 "$docroot"
+  "$STAGING_GUILDS_DOCROOT"; do
+  install -d -o ubuntu -g ubuntu -m 0755 "$docroot"
 done
+install -d -o www-data -g www-data -m 0755 "$STAGING_ACME_DOCROOT"
 
 for log_root in \
   "$STAGING_RSVP_LOG_ROOT" \

@@ -224,6 +224,47 @@ check_ssh_aliases() {
   done
 }
 
+# Checkout folders belong to ubuntu, so deploys run as ubuntu; only the paths
+# the apps write belong to www-data. A root-owned file is left over from a
+# deploy run as root. Missing paths are skipped: the sites may not be cloned.
+check_checkout_owners() {
+  local path owner root_file problems=0
+  local -a ubuntu_paths=(
+    "$RSVP_ROOT" "${RSVP_ROOT}/public" "${RSVP_ROOT}/public/consideramazon"
+    "$AMPAS_ROOT" "${AMPAS_ROOT}/web" "$GUILDS_ROOT" "${GUILDS_ROOT}/web"
+  )
+  local -a www_paths=(
+    "${RSVP_ROOT}/admin/application/logs" "${AMPAS_ROOT}/web/app/uploads" "${GUILDS_ROOT}/web/app/uploads"
+  )
+  for path in "${ubuntu_paths[@]}"; do
+    [[ -e "$path" ]] || continue
+    owner="$(stat -c '%U' "$path")"
+    if [[ "$owner" != ubuntu ]]; then
+      manual_result FAIL 'checkout owner' "${path} is ${owner}, want ubuntu: converge resets it"
+      problems=$((problems + 1))
+    fi
+  done
+  for path in "${www_paths[@]}"; do
+    [[ -e "$path" ]] || continue
+    owner="$(stat -c '%U' "$path")"
+    if [[ "$owner" != www-data ]]; then
+      manual_result FAIL 'writable owner' "${path} is ${owner}, want www-data"
+      problems=$((problems + 1))
+    fi
+  done
+  for path in "$RSVP_ROOT" "$AMPAS_ROOT" "$GUILDS_ROOT"; do
+    [[ -d "$path" ]] || continue
+    root_file="$(find "$path" -user root -print -quit 2>/dev/null || true)"
+    if [[ -n "$root_file" ]]; then
+      manual_result FAIL 'root-owned' "${root_file} (and maybe more): chown the checkout back to ubuntu"
+      problems=$((problems + 1))
+    fi
+  done
+  if [[ "$problems" -eq 0 ]]; then
+    manual_result ok 'checkout owner' 'checkouts ubuntu, writable paths www-data, no root-owned files'
+  fi
+}
+
 run_manual_checks() {
   local environment="$1" site field
   local -a db_keys=()
@@ -261,6 +302,7 @@ run_manual_checks() {
   done
   check_auth_file "$environment"
   check_ssh_aliases
+  check_checkout_owners
 }
 
 # ---- PHP per site ----------------------------------------------------------
