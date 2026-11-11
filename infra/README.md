@@ -239,14 +239,15 @@ Use the ref that `/etc/amazon-server.ref` names. Every later run is
 
 **Status.** `sudo amazon-server-converge status` changes nothing. It prints the
 environment, the ref, the applied commit and time, the remote tip (`git ls-remote`),
-the checkout commit and whether it is clean, the manifest check, the PHP checks, and the
-manual checks. `status --short` prints one line for probes. The verdict:
+the checkout commit and whether it is clean, the manifest check, the PHP checks, the OS patch
+checks (see "OS patches"), and the manual checks. `status --short` prints one line for probes.
+The verdict:
 
 | Verdict | Meaning | Exit |
 |---|---|---|
 | `CURRENT` | Applied commit is the remote tip for this environment, every owned file matches, manual checks pass | 0 |
 | `BEHIND` | Applied commit is not the remote tip (or the remote could not be read) | 1 |
-| `DRIFT` | An owned file changed or is missing, the manifest is missing or unusable, the marker names another environment or none, the checkout is dirty, or a manual check fails | 1 |
+| `DRIFT` | An owned file changed or is missing, the manifest is missing or unusable, the marker names another environment or none, the checkout is dirty, automatic security updates are off, or a manual check fails | 1 |
 | `UNAPPLIED` | No `/etc/amazon-server.applied` marker | 1 |
 
 `UNAPPLIED` wins over `DRIFT`, and `DRIFT` wins over `BEHIND`.
@@ -276,6 +277,68 @@ package not installed, or a CLI on another version.
 **Hand edits show as drift.** A hand edit to an owned file reads as `DRIFT` until the
 change lands in this repo, and the next converge overwrites it. Change the repo, land
 it, then converge.
+
+## OS patches
+
+Both instances run Ubuntu's `unattended-upgrades` with its stock configuration. Every day it
+refreshes the package lists and installs updates from the security pocket (`noble-security`,
+plus the ESM security origins). Nothing else installs by itself:
+
+- updates from `noble-updates`, including fixed kernels that Ubuntu publishes there first;
+- PHP packages from the `ondrej/php` PPA;
+- reboots, which kernel and libc updates need before they take effect.
+
+Those wait for the **patch window**: once a month, and sooner when a critical CVE needs a
+package outside the security pocket. The driver owns the window and gives the go for each
+instance.
+
+**Status.** The patch section of `status` reads the cached lists and changes nothing:
+
+| Line | Reports | Effect |
+|---|---|---|
+| `auto updates` | Both apt timers active and enabled, `APT::Periodic::Unattended-Upgrade "1"`, a security origin allowed | `FAIL` is `DRIFT` |
+| `package lists` | Hours since the last successful daily refresh | warns over 48 hours |
+| `security` | Security updates still waiting | warns when any wait: the daily job should have taken them |
+| `updates` | Other updates waiting for the window | info |
+| `php ppa` | PPA packages waiting for the window, by name | info |
+| `reboot` | `/var/run/reboot-required` and the packages that set it | warns |
+| `kernels` | Running kernel and installed images | warns over three images |
+
+**The window.** Patch staging, check it, then patch production the same way. Per instance:
+
+1. Run `sudo amazon-server-converge status` and note the patch lines.
+2. Take a snapshot from the operator machine and wait for `available`. Only the backup profile
+   can create and read snapshots (`IAM.md`):
+
+   ```bash
+   AWS_PROFILE=amazon-lightsail-backup aws lightsail create-instance-snapshot \
+     --region us-west-2 --instance-name amazon-fyc-staging \
+     --instance-snapshot-name "amazon-fyc-staging-pre-patch-$(date +%Y%m%d)"
+   ```
+
+3. Preview, then apply. Pick a time away from the top of the hour, when the RSVP reminder
+   cron runs:
+
+   ```bash
+   sudo apt-get update
+   sudo apt-get -s dist-upgrade | grep '^Inst'
+   sudo DEBIAN_FRONTEND=noninteractive apt-get -y dist-upgrade
+   ```
+
+   A PHP update from the PPA restarts PHP-FPM. Read the preview before applying, because a
+   package that wants to remove another one needs a closer look.
+4. Reboot if `status` reports one: `sudo systemctl reboot`.
+5. Remove old kernels: `sudo apt-get -y autoremove --purge`. Ubuntu keeps the running kernel
+   and the two newest ones.
+6. Check the instance:
+   - `status` reads `CURRENT`, with `reboot` not required;
+   - `uname -r` is the newest installed kernel;
+   - `nginx`, PHP-FPM, `ssh` and `cron` are running;
+   - each site answers through CloudFront and at the origin as it did before.
+   Record the snapshot name, the package count and the results on the covering issue.
+
+To roll back, create an instance from the snapshot (`aws lightsail
+create-instances-from-snapshot`) and move the static IP to it.
 
 ## Post-apply manual steps
 

@@ -418,6 +418,130 @@ php_summary() {
   printf '%s, cli %s: %d problems' "$summary" "${PHP_SETTING[cli_version]:-unknown}" "${#PHP_PROBLEMS[@]}"
 }
 
+# ---- OS patches ------------------------------------------------------------
+# The policy (infra/README.md, "OS patches"): unattended-upgrades installs the
+# security pocket every day. noble-updates, the PHP PPA, kernels and reboots
+# wait for the monthly patch window. Status reports what is waiting.
+
+PATCH_LINES=()
+PATCH_PROBLEMS=()
+PATCH_WARNED=0
+REBOOT_REQUIRED_FILE='/var/run/reboot-required'
+# apt.systemd.daily touches this after each successful list refresh.
+APT_UPDATE_STAMP='/var/lib/apt/periodic/update-success-stamp'
+APT_STAMP_MAX_AGE_HOURS=48
+# More installed kernel images than this means the window skipped the cleanup.
+KERNEL_IMAGES_MAX=3
+
+# patch_result <ok|WARN|FAIL|info> <label> <detail>; FAIL is drift.
+patch_result() {
+  PATCH_LINES+=("$(printf '  %-4s  %-16s %s' "$1" "$2" "$3")")
+  case "$1" in
+    FAIL) PATCH_PROBLEMS+=("${2}: ${3}") ;;
+    WARN) PATCH_WARNED=$((PATCH_WARNED + 1)) ;;
+  esac
+}
+
+# pending_upgrades: "<class> <package>" for each upgrade apt would install now,
+# from the cached lists. The class is security, php-ppa or other. A simulation:
+# nothing is locked, downloaded or changed.
+pending_upgrades() {
+  apt-get -s -o Debug::NoLocking=1 dist-upgrade 2>/dev/null | awk '
+    $1 != "Inst" { next }
+    /-security[ ,]/ { print "security", $2; next }
+    /ondrej/ { print "php-ppa", $2; next }
+    { print "other", $2 }' || true
+}
+
+check_automatic_updates() {
+  local timer list_timer periodic origins
+  timer="$(unit_state apt-daily-upgrade.timer)"
+  list_timer="$(unit_state apt-daily.timer)"
+  periodic="$(apt-config dump 2>/dev/null \
+    | awk -F'"' '$1 == "APT::Periodic::Unattended-Upgrade " { print $2 }' || true)"
+  origins="$(apt-config dump 2>/dev/null \
+    | grep -cE '^Unattended-Upgrade::(Allowed-Origins|Origins-Pattern):: ".*security' || true)"
+  if [[ "$timer" != 'active enabled' || "$list_timer" != 'active enabled' ]]; then
+    patch_result FAIL 'auto updates' "apt-daily-upgrade.timer ${timer}, apt-daily.timer ${list_timer}, want active enabled"
+  elif [[ "$periodic" != 1 ]]; then
+    patch_result FAIL 'auto updates' "APT::Periodic::Unattended-Upgrade is ${periodic:-unset}, want 1"
+  elif [[ "${origins:-0}" -eq 0 ]]; then
+    patch_result FAIL 'auto updates' 'unattended-upgrades allows no security origin'
+  else
+    patch_result ok 'auto updates' "daily; ${origins} security origins allowed"
+  fi
+}
+
+check_apt_lists() {
+  local stamp age_hours
+  if [[ ! -e "$APT_UPDATE_STAMP" ]]; then
+    patch_result WARN 'package lists' "${APT_UPDATE_STAMP} missing: no successful daily refresh recorded"
+    return
+  fi
+  stamp="$(stat -c '%Y' "$APT_UPDATE_STAMP")"
+  age_hours=$(( ($(date +%s) - stamp) / 3600 ))
+  if [[ "$age_hours" -gt "$APT_STAMP_MAX_AGE_HOURS" ]]; then
+    patch_result WARN 'package lists' "last refreshed ${age_hours}h ago: the daily job has stopped refreshing"
+  else
+    patch_result ok 'package lists' "refreshed ${age_hours}h ago"
+  fi
+}
+
+check_pending_upgrades() {
+  local class package security=0 other=0
+  local -a php=()
+  while read -r class package; do
+    case "$class" in
+      security) security=$((security + 1)) ;;
+      php-ppa) php+=("$package") ;;
+      other) other=$((other + 1)) ;;
+    esac
+  done < <(pending_upgrades)
+  if [[ "$security" -gt 0 ]]; then
+    patch_result WARN 'security' "${security} waiting: the daily job installs these; read /var/log/unattended-upgrades"
+  else
+    patch_result ok 'security' 'none waiting'
+  fi
+  patch_result info 'updates' "${other} waiting for the patch window"
+  if [[ ${#php[@]} -gt 0 ]]; then
+    patch_result info 'php ppa' "${#php[@]} waiting for the patch window: ${php[*]}"
+  else
+    patch_result ok 'php ppa' 'none waiting'
+  fi
+}
+
+check_reboot() {
+  local packages=''
+  if [[ -e "$REBOOT_REQUIRED_FILE" ]]; then
+    if [[ -r "${REBOOT_REQUIRED_FILE}.pkgs" ]]; then
+      packages="$(sort -u "${REBOOT_REQUIRED_FILE}.pkgs" | paste -sd ' ' -)"
+    fi
+    patch_result WARN 'reboot' "required${packages:+ by ${packages}}"
+  else
+    patch_result ok 'reboot' 'not required'
+  fi
+}
+
+check_kernels() {
+  local running count
+  running="$(uname -r)"
+  count="$(dpkg-query -W -f '${db:Status-Abbrev}${Package}\n' 'linux-image-[0-9]*' 2>/dev/null \
+    | grep -c '^ii ' || true)"
+  if [[ "${count:-0}" -gt "$KERNEL_IMAGES_MAX" ]]; then
+    patch_result WARN 'kernels' "running ${running}; ${count} images installed, remove old ones in the patch window"
+  else
+    patch_result ok 'kernels' "running ${running}; ${count} images installed"
+  fi
+}
+
+run_patch_checks() {
+  check_automatic_updates
+  check_apt_lists
+  check_pending_upgrades
+  check_reboot
+  check_kernels
+}
+
 converge_status() {
   local short="$1"
   local environment ref key value line verdict
@@ -504,6 +628,10 @@ converge_status() {
   for line in "${PHP_PROBLEMS[@]}"; do
     drift_reasons+=("$line")
   done
+  run_patch_checks
+  for line in "${PATCH_PROBLEMS[@]}"; do
+    drift_reasons+=("$line")
+  done
 
   if [[ -z "$applied_sha" ]]; then
     verdict='UNAPPLIED'
@@ -521,9 +649,10 @@ converge_status() {
     for line in "${drift_reasons[@]}"; do
       reasons+="; ${line}"
     done
-    printf '%s: %s (applied %s, remote %s, owned %d changed %d missing, manual %d failed %d warned)%s\n' \
+    printf '%s: %s (applied %s, remote %s, owned %d changed %d missing, manual %d failed %d warned, patches %d failed %d warned)%s\n' \
       "$environment" "$verdict" "${applied_short:-none}" "${remote_short:-unreachable}" \
-      "${#changed_files[@]}" "${#missing_files[@]}" "$MANUAL_FAILED" "$MANUAL_WARNED" "$reasons"
+      "${#changed_files[@]}" "${#missing_files[@]}" "$MANUAL_FAILED" "$MANUAL_WARNED" \
+      "${#PATCH_PROBLEMS[@]}" "$PATCH_WARNED" "$reasons"
   else
     printf '%-12s %s\n' environment "$environment" ref "$ref"
     if [[ -n "$applied_sha" ]]; then
@@ -552,6 +681,8 @@ converge_status() {
     done
     printf '%-12s %s\n' php "$(php_summary)"
     printf '%s\n' "${PHP_LINES[@]}"
+    printf '%-12s %d failed, %d warned\n' patches "${#PATCH_PROBLEMS[@]}" "$PATCH_WARNED"
+    printf '%s\n' "${PATCH_LINES[@]}"
     printf '%-12s %d failed, %d warned\n' manual "$MANUAL_FAILED" "$MANUAL_WARNED"
     printf '%s\n' "${MANUAL_LINES[@]}"
     for line in "${drift_reasons[@]}"; do
@@ -581,4 +712,7 @@ main() {
   esac
 }
 
-main "$@"
+# Tests source this file for its functions; only a direct run acts.
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
+  main "$@"
+fi
