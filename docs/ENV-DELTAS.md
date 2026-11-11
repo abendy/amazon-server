@@ -98,10 +98,11 @@ After a fetch, this exits 0 when the incoming branch carries the loader:
 git -C /var/www/html/rsvp cat-file -e origin/<branch>:admin/application/helpers/secrets_helper.php
 ```
 
-1. Create the file, owned by root and readable by `www-data` only:
+1. Create the file, owned by `ubuntu` like the rest of the checkout, and readable by `www-data`
+   only. `converge status` fails on any root-owned file in a checkout:
 
    ```bash
-   sudo install -o root -g www-data -m 0640 /dev/null /var/www/html/rsvp/admin/application/config/<environment>/secrets.json
+   sudo install -o ubuntu -g www-data -m 0640 /dev/null /var/www/html/rsvp/admin/application/config/<environment>/secrets.json
    sudoedit /var/www/html/rsvp/admin/application/config/<environment>/secrets.json
    ```
 
