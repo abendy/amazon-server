@@ -217,11 +217,45 @@ apt-get install -y \
   software-properties-common \
   unzip
 
-add-apt-repository -y ppa:ondrej/php
+# PHP comes from packages.sury.org, where Ondrej Sury is moving the
+# ppa:ondrej/php packages. The keyring package installs the archive key the
+# source names. The old PPA source goes.
+PHP_SURY_KEYRING='/usr/share/keyrings/debsuryorg-archive-keyring.gpg'
+PHP_SURY_SOURCE='/etc/apt/sources.list.d/php-sury.sources'
+if [[ ! -e "$PHP_SURY_KEYRING" ]]; then
+  sury_keyring_deb="$(mktemp --suffix=.deb)"
+  curl -fsSL -o "$sury_keyring_deb" https://packages.sury.org/debsuryorg-archive-keyring.deb
+  dpkg -i "$sury_keyring_deb"
+  rm -f "$sury_keyring_deb"
+fi
+cat > "$PHP_SURY_SOURCE" <<APT_SOURCE
+Types: deb
+URIs: https://packages.sury.org/php/
+Suites: $(awk -F= '$1 == "VERSION_CODENAME" { print $2 }' /etc/os-release)
+Components: main
+Signed-By: ${PHP_SURY_KEYRING}
+APT_SOURCE
+own_file "$PHP_SURY_SOURCE"
+rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list
 
 php_write_apt_pins
 
 apt-get update
+
+# A PPA build of a version sorts above the same version on packages.sury.org,
+# so new PHP packages would refuse to install beside it. Move each installed
+# Sury-built package (its version names deb.sury.org) whose installed build
+# differs from the one packages.sury.org serves. Later runs find none.
+sury_moves=()
+while read -r sury_package sury_installed; do
+  sury_version="$(apt-cache madison "$sury_package" | awk -F' [|] ' '$3 ~ /packages[.]sury[.]org/ { print $2; exit }')"
+  if [[ -n "$sury_version" && "$sury_version" != "$sury_installed" ]]; then
+    sury_moves+=("${sury_package}=${sury_version}")
+  fi
+done < <(dpkg-query -W -f '${db:Status-Abbrev}${Package} ${Version}\n' | awk '$1 == "ii" && $3 ~ /deb[.]sury[.]org/ { print $2, $3 }')
+if [[ ${#sury_moves[@]} -gt 0 ]]; then
+  apt-get install -y --allow-downgrades "${sury_moves[@]}"
+fi
 php_install_packages
 php_write_timezone_ini
 

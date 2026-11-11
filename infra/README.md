@@ -225,6 +225,14 @@ pools. Then it purges every version that no site and not the CLI uses, with its 
 `/etc/php/<version>` folder. Status reports any such version still installed as a problem.
 Rolling back is the same move with the old value; converge installs the old version again.
 
+**PHP package source.** PHP comes from packages.sury.org, where Ondrej Sury is moving the
+`ppa:ondrej/php` packages. Converge installs the `debsuryorg-archive-keyring` package for the
+archive key, writes `/etc/apt/sources.list.d/php-sury.sources`, and removes the old PPA source. A
+PPA build sorts above the same version on packages.sury.org, and new PHP packages refuse to install
+beside it. So the first converge after the switch reinstalls every Sury-built package at the
+version packages.sury.org serves (`apt-get install --allow-downgrades`), which restarts PHP-FPM
+once. Later converges find nothing to move.
+
 **First converge per instance.** Instances provisioned before the shim existed carry
 an old full copy of the provisioner. Run the repo copy once; it installs the shim:
 
@@ -293,7 +301,7 @@ refreshes the package lists and installs updates from the security pocket (`nobl
 plus the ESM security origins). Nothing else installs by itself:
 
 - updates from `noble-updates`, including fixed kernels that Ubuntu publishes there first;
-- PHP packages from the `ondrej/php` PPA;
+- PHP packages from packages.sury.org (see "PHP package source");
 - reboots, which kernel and libc updates need before they take effect.
 
 Those wait for the **patch window**: once a month, and sooner when a critical CVE needs a
@@ -308,7 +316,7 @@ instance.
 | `package lists` | Hours since the last successful daily refresh | warns over 48 hours |
 | `security` | Security updates still waiting | warns when any wait: the daily job should have taken them |
 | `updates` | Other updates waiting for the window | info |
-| `php ppa` | PPA packages waiting for the window, by name | info |
+| `php` | PHP packages waiting for the window, by name | info |
 | `reboot` | `/var/run/reboot-required` and the packages that set it | warns |
 | `kernels` | Running kernel and installed images | warns over three images |
 
@@ -333,7 +341,7 @@ instance.
    sudo DEBIAN_FRONTEND=noninteractive apt-get -y dist-upgrade
    ```
 
-   A PHP update from the PPA restarts PHP-FPM. Read the preview before applying, because a
+   A PHP update restarts PHP-FPM. Read the preview before applying, because a
    package that wants to remove another one needs a closer look.
 4. Reboot if `status` reports one: `sudo systemctl reboot`.
 5. Remove old kernels: `sudo apt-get -y autoremove --purge`. Ubuntu keeps the running kernel

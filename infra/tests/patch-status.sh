@@ -2,7 +2,7 @@
 # OS patch checks in infra/converge.sh status. Sources the script for its
 # functions, stubs apt-get, apt-config, systemctl, dpkg-query and uname, and
 # runs the checks against two hosts:
-#   1. healthy: daily job on, one PPA and two other upgrades waiting, few kernels
+#   1. healthy: daily job on, one PHP and two other upgrades waiting, few kernels
 #   2. neglected: timer off, a security upgrade waiting, reboot pending, stale
 #      lists, too many kernels
 # Exit status is the number of failed checks.
@@ -78,7 +78,7 @@ touch "$APT_UPDATE_STAMP"
 SIMULATION='Reading package lists...
 Inst perl [5.38.2-3.2ubuntu0.1] (5.38.2-3.2ubuntu0.2 Ubuntu:24.04/noble-updates [amd64])
 Inst console-setup-linux [1.226ubuntu1] (1.226ubuntu1.1 Ubuntu:24.04/noble-updates [all])
-Inst php8.4-fpm [8.4.27-1+ubuntu24.04.1+deb.sury.org+1] (8.4.28-1+ubuntu24.04.1+deb.sury.org+1 LP-PPA-ondrej-php:noble [amd64])
+Inst php8.4-fpm [8.4.27-1+0~20261021.57+ubuntu24.04~1.gbp7636b9] (8.4.28-1+0~20261120.58+ubuntu24.04~1.gbp1a2b3c noble [amd64])
 Conf perl (5.38.2-3.2ubuntu0.2 Ubuntu:24.04/noble-updates [amd64])
 '
 KERNELS='ii linux-image-7.0.0-1014-aws
@@ -90,7 +90,7 @@ expect 'auto updates' '^  ok .* daily; 1 security origins allowed$'
 expect 'package lists' '^  ok .* refreshed 0h ago$'
 expect 'security' '^  ok .* none waiting$'
 expect 'updates' '^  info .* 2 waiting for the patch window$'
-expect 'php ppa' '^  info .* 1 waiting for the patch window: php8\.4-fpm$'
+expect 'php' '^  info .* 1 waiting for the patch window: php8\.4-fpm$'
 expect 'reboot' '^  ok .* not required$'
 expect 'kernels' '^  ok .* running 7\.0\.0-1017-aws; 2 images installed$'
 expect_counts 0 0
@@ -113,7 +113,7 @@ expect 'auto updates' '^  FAIL .* apt-daily-upgrade\.timer inactive enabled'
 expect 'package lists' '^  WARN .* last refreshed (71|72)h ago'
 expect 'security' '^  WARN .* 1 waiting'
 expect 'updates' '^  info .* 0 waiting'
-expect 'php ppa' '^  ok .* none waiting$'
+expect 'php' '^  ok .* none waiting$'
 expect 'reboot' '^  WARN .* required by libc6 linux-image-7\.0\.0-1017-aws$'
 expect 'kernels' '^  WARN .* 4 images installed, remove old ones'
 expect_counts 1 4

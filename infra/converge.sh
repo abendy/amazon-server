@@ -420,7 +420,7 @@ php_summary() {
 
 # ---- OS patches ------------------------------------------------------------
 # The policy (infra/README.md, "OS patches"): unattended-upgrades installs the
-# security pocket every day. noble-updates, the PHP PPA, kernels and reboots
+# security pocket every day. noble-updates, PHP from packages.sury.org, kernels and reboots
 # wait for the monthly patch window. Status reports what is waiting.
 
 PATCH_LINES=()
@@ -443,13 +443,13 @@ patch_result() {
 }
 
 # pending_upgrades: "<class> <package>" for each upgrade apt would install now,
-# from the cached lists. The class is security, php-ppa or other. A simulation:
+# from the cached lists. The class is security, php or other. A simulation:
 # nothing is locked, downloaded or changed.
 pending_upgrades() {
   apt-get -s -o Debug::NoLocking=1 dist-upgrade 2>/dev/null | awk '
     $1 != "Inst" { next }
     /-security[ ,]/ { print "security", $2; next }
-    /ondrej/ { print "php-ppa", $2; next }
+    $2 ~ /^php/ { print "php", $2; next }
     { print "other", $2 }' || true
 }
 
@@ -493,7 +493,7 @@ check_pending_upgrades() {
   while read -r class package; do
     case "$class" in
       security) security=$((security + 1)) ;;
-      php-ppa) php+=("$package") ;;
+      php) php+=("$package") ;;
       other) other=$((other + 1)) ;;
     esac
   done < <(pending_upgrades)
@@ -504,9 +504,9 @@ check_pending_upgrades() {
   fi
   patch_result info 'updates' "${other} waiting for the patch window"
   if [[ ${#php[@]} -gt 0 ]]; then
-    patch_result info 'php ppa' "${#php[@]} waiting for the patch window: ${php[*]}"
+    patch_result info 'php' "${#php[@]} waiting for the patch window: ${php[*]}"
   else
-    patch_result ok 'php ppa' 'none waiting'
+    patch_result ok 'php' 'none waiting'
   fi
 }
 
