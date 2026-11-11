@@ -52,8 +52,28 @@ docker compose -f docker-compose.yml up -d
 ```
 
 The network-create command is safe to repeat only after checking whether the network already
-exists. The final command publishes port 80 and loads `localhost`, `ampas.local`, and
-`guilds.local`. Use `curl --resolve <name>:80:127.0.0.1` for host-routed checks.
+exists. The final command starts nginx and the Mailpit mail catcher together. It publishes port 80
+and loads `localhost`, `ampas.local`, `guilds.local`, and `mailpit.local`. Use
+`curl --resolve <name>:80:127.0.0.1` for host-routed checks.
+
+### Local mail: Mailpit
+
+The same Compose file runs Mailpit, a mail catcher. Local RSVP and WordPress mail goes to
+`mailpit:1025` on the `amazon-local` network and stops there: Mailpit has no relay, so nothing it
+catches can reach a real inbox. SMTP is not published on the host.
+
+Open the caught mail at `http://mailpit.local` (served by the shared nginx, like the site names),
+at `http://mailpit.dev.amazonmgmstudiosawards.com` from a tailnet device
+([`docs/PHONE-ACCESS.md`](docs/PHONE-ACCESS.md)), or at port `8025` on the host directly. Port
+`8025` is published on all interfaces, like port `80`. Like `ampas.local`, `mailpit.local` needs a
+`127.0.0.1` and `::1` entry in the machine's `/etc/hosts`. The stack's final command above starts
+Mailpit with nginx. To start it on its own:
+
+```bash
+docker compose -f docker-compose.yml up -d mailpit
+```
+
+Caught mail is kept only while the container runs.
 
 Each site's database runs `mysql:8.0.45`, the staging and production engine, and mounts
 [`mysql/server-parity.cnf`](mysql/server-parity.cnf) for the servers' `sql_mode`, character set,

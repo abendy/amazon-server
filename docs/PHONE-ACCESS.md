@@ -1,6 +1,6 @@
 # Private phone access
 
-The local AMPAS, Guilds, and RSVP sites use stable dev hostnames for phones
+The local AMPAS, Guilds, and RSVP sites and the Mailpit mail viewer use stable dev hostnames for phones
 connected to the Docker host's Tailscale network. This is a development path;
 it does not publish the sites or database ports to the public internet.
 
@@ -15,18 +15,20 @@ it does not publish the sites or database ports to the public internet.
 ## DNS
 
 Create public DNS A records in the `amazonmgmstudiosawards.com` zone — either
-one wildcard or three explicit records (equivalent; the live setup uses three
-explicit records, created 2026-08-21):
+one wildcard or one explicit record per name (equivalent; the live setup uses
+explicit records: the three site records created 2026-08-21, and `mailpit.dev`,
+which must be added):
 
 | Type | Name | Value |
 | --- | --- | --- |
-| A | `*.dev` (or `ampas.dev`, `guilds.dev`, `rsvp.dev`) | The Docker host's current Tailscale IPv4 address |
+| A | `*.dev` (or `ampas.dev`, `guilds.dev`, `rsvp.dev`, `mailpit.dev`) | The Docker host's current Tailscale IPv4 address |
 
-Either form yields these three names:
+Either form yields these names:
 
 - `ampas.dev.amazonmgmstudiosawards.com`
 - `guilds.dev.amazonmgmstudiosawards.com`
 - `rsvp.dev.amazonmgmstudiosawards.com`
+- `mailpit.dev.amazonmgmstudiosawards.com`
 
 The record points to the host's tailnet address, so the names are useful only
 from a device that can route through Tailscale. Update the record if that
@@ -39,6 +41,7 @@ Open these URLs from the enrolled phone:
 - AMPAS: <http://ampas.dev.amazonmgmstudiosawards.com>
 - Guilds: <http://guilds.dev.amazonmgmstudiosawards.com>
 - RSVP admin: <http://rsvp.dev.amazonmgmstudiosawards.com/admin/>
+- Mailpit (caught local mail): <http://mailpit.dev.amazonmgmstudiosawards.com>
 
 For RSVP, also check the built embed at
 <http://rsvp.dev.amazonmgmstudiosawards.com/rsvp/consideramazon/>. The RSVP

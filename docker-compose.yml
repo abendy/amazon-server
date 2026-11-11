@@ -23,3 +23,19 @@ services:
       shared:
         aliases:
           - nginx
+
+  # Local mail catcher. The sites send to mailpit:1025 on the amazon-local network; SMTP is not
+  # published on the host. The web page is http://mailpit.local, or port 8025 on the host. No relay
+  # is configured, so caught mail can never be released to a real inbox.
+  mailpit:
+    container_name: amazon-server-mailpit
+    platform: linux/arm64
+    image: axllent/mailpit:v1.32.0
+    ports:
+      - "8025:8025"
+    expose:
+      - "1025"
+    networks:
+      shared:
+        aliases:
+          - mailpit

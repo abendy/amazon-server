@@ -39,13 +39,30 @@ WordPress. Trailers upload through WP Media, so these must hold on every re-prov
 
 ## Scheduled jobs
 
-Installed by hand ([`infra/README.md`](../infra/README.md), post-apply step 5), not by cloud-init.
+Converge installs the reminder cron on production only: `install_reminder_cron` in
+[`infra/cloud-init.sh`](../infra/cloud-init.sh) refuses any other environment
+([`infra/README.md`](../infra/README.md), "RSVP reminders (production only)"). It never removes a
+cron file it did not install, so a hand-made one would survive; staging has none.
 
 | Environment | RSVP reminder emails (hourly) |
 |---|---|
-| local | none; run `run_reminder.docker.sh` by hand |
-| staging | none |
+| local | none; run `run_reminder.docker.sh` by hand, and its mail lands in Mailpit |
+| staging | none; reminders stay off |
 | production | `/etc/cron.d/amazon-rsvp-reminders` |
+
+## Outgoing mail
+
+Local mail never leaves the Docker host. Staging and production send through SES, configured in
+each site repository, not in this tree.
+
+| Environment | RSVP and WordPress SMTP | Mail viewer |
+|---|---|---|
+| local | `mailpit:1025` on `amazon-local`, no login, no TLS; not published on the host | `http://mailpit.local`, `http://mailpit.dev.amazonmgmstudiosawards.com`, or host port `8025` |
+| staging | SES, site-owned | none |
+| production | SES, site-owned | none |
+
+`nginx/server_blocks/mailpit.conf` is local only. It ships with the tree, but on an instance its
+names have no DNS record and its upstream never resolves, so it serves nothing.
 
 ## Local database publishing
 
