@@ -58,11 +58,103 @@ each site repository, not in this tree.
 | Environment | RSVP and WordPress SMTP | Mail viewer |
 |---|---|---|
 | local | `mailpit:1025` on `amazon-local`, no login, no TLS; not published on the host | `http://mailpit.local`, `http://mailpit.dev.amazonmgmstudiosawards.com`, or host port `8025` |
-| staging | SES, site-owned | none |
-| production | SES, site-owned | none |
+| staging | SES; RSVP's login in its secrets file (below) | none |
+| production | SES; RSVP's login in its secrets file (below) | none |
 
 `nginx/server_blocks/mailpit.conf` is local only. It ships with the tree, but on an instance its
 names have no DNS record and its upstream never resolves, so it serves nothing.
+
+## RSVP secrets file
+
+On staging and production, RSVP reads its SES SMTP login and its database login from an untracked
+file in the checkout:
+
+```text
+/var/www/html/rsvp/admin/application/config/<environment>/secrets.json   # staging or production
+```
+
+Git ignores it, and provisioning does not write it: the driver does. PHP-FPM and the reminder cron
+both run as `www-data` and both read it. `includes/security.conf` denies `config/`, so nginx never
+serves it. It holds one JSON object with a string value for each of `smtp_user`, `smtp_pass`,
+`db_hostname`, `db_username`, `db_password` and `db_database`. RSVP decodes it as JSON and never
+runs it. rsvp's `docs/DEPLOYMENT.md` ("Secrets File") says which code reads each key.
+
+Any failure logs one fixed line naming the file and the keys it could not supply, in
+`/var/www/html/rsvp/admin/application/logs/log-<date>.php`. That covers a missing or unreadable
+file, invalid JSON, a top level that is not an object, and a missing, empty or non-string value.
+The line never holds a value, the file's content or the JSON decoder's message. A missing database
+key stops each request with a blank 500. A missing mail key leaves the login empty, so each send
+fails and is logged.
+
+### Before the pull that brings the loader
+
+Do this on staging, then production, before the first pull that brings
+`admin/application/helpers/secrets_helper.php`. Without the file, that pull takes the site down.
+After a fetch, this exits 0 when the incoming branch carries the loader:
+
+```bash
+git -C /var/www/html/rsvp cat-file -e origin/<branch>:admin/application/helpers/secrets_helper.php
+```
+
+1. Create the file, owned by root and readable by `www-data` only:
+
+   ```bash
+   sudo install -o root -g www-data -m 0640 /dev/null /var/www/html/rsvp/admin/application/config/<environment>/secrets.json
+   sudoedit /var/www/html/rsvp/admin/application/config/<environment>/secrets.json
+   ```
+
+2. Fill in every value. Start the SES login with the new credential (rotation, below). Copy the
+   database login from that environment's tracked `database.php` as it is before the pull:
+
+   ```json
+   {
+     "smtp_user": "",
+     "smtp_pass": "",
+     "db_hostname": "",
+     "db_username": "",
+     "db_password": "",
+     "db_database": ""
+   }
+   ```
+
+3. Check it as `www-data`. It reads and decodes the JSON the way RSVP does and never runs it. It
+   prints each key name with `set` or `MISSING`, or one fixed `ERROR` line and exit 1 when the file
+   is missing, unreadable or not a JSON object. It never prints a value, the file's content or the
+   decoder's message. A file that is just `[]` passes the object test and shows every key
+   `MISSING`, so treat any `MISSING` as a failed check.
+
+   ```bash
+   sudo -u www-data php -r '$f = "/var/www/html/rsvp/admin/application/config/<environment>/secrets.json"; set_error_handler(function () { return true; }); $j = file_get_contents($f); restore_error_handler(); try { $s = is_string($j) ? json_decode($j, true, 4, JSON_THROW_ON_ERROR) : null; } catch (JsonException $e) { $s = null; } if (!is_array($s) || ($s !== array() && array_is_list($s))) { echo "ERROR: ", $f, " is missing, unreadable or not a JSON object\n"; exit(1); } foreach (array("smtp_user", "smtp_pass", "db_hostname", "db_username", "db_password", "db_database") as $k) { echo $k, ": ", (isset($s[$k]) && is_string($s[$k]) && $s[$k] !== "" ? "set" : "MISSING"), "\n"; }'
+   ```
+
+4. Pull as rsvp's `docs/DEPLOYMENT.md` says, then run its staging check.
+5. Confirm there are no `secrets:` lines in the app log:
+
+   ```bash
+   sudo grep -n 'secrets:' /var/www/html/rsvp/admin/application/logs/log-$(date +%F).php
+   ```
+
+### Rotating the SES SMTP login
+
+1. Create a new SES SMTP credential in AWS. Keep the old one active.
+2. Put the new `smtp_user` and `smtp_pass` in the staging file, then the production file.
+3. Deploy, if the loader is not live yet (above). Once it is live, the next request reads the file.
+   If a send still uses the old login, reload RSVP's PHP-FPM:
+   `sudo systemctl reload php<version>-fpm`, the version in the name of
+   `/run/php/php<version>-fpm-rsvp.sock`.
+4. Check one send in each environment, such as a test RSVP from an address that receives mail there.
+   Look for its success, and for no `secrets:` or SMTP error lines in the app log.
+5. Revoke the old credential in AWS.
+
+### Rotating the database password
+
+1. Create the new login on the database server, keeping the old one working. Where the database
+   has only one admin login and changing it ends the old password at once, do steps 1 and 2 back to
+   back: requests fail between them.
+2. Put the new `db_username` and `db_password` in the file, and reload PHP-FPM as in the SES steps.
+3. Check: log in to the admin, open one title's RSVP list, and confirm no `secrets:` or database
+   error lines in the app log. The reminder cron reads the same file on its next run.
+4. Remove the old login on the database server.
 
 ## Local database publishing
 
