@@ -237,9 +237,13 @@ if ! command -v composer >/dev/null 2>&1; then
 fi
 
 # Node/npm for on-instance theme builds. Remove once GitHub Actions
-# compile and deploy the theme assets.
-if ! command -v node >/dev/null 2>&1; then
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+# compile and deploy the theme assets. Installs Node when absent, and replaces
+# any older major (an Ubuntu or NodeSource build) with the supported LTS that
+# the themes' .nvmrc names. Patch updates come in the OS patch window.
+NODE_MAJOR=24
+node_installed_major="$(node --version 2>/dev/null | sed -nE 's/^v([0-9]+)\..*/\1/p' || true)"
+if [[ -z "$node_installed_major" || "$node_installed_major" -lt "$NODE_MAJOR" ]]; then
+  curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -
   apt-get install -y nodejs
 fi
 
