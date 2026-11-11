@@ -667,6 +667,9 @@ server {
   include includes/security.conf;
   include includes/static.conf;
   include includes/wordpress.conf;
+
+  # Trust X-Forwarded-For from CloudFront only.
+  include includes/cloudfront-real-ip.conf;
 }
 NGINX
 
@@ -698,6 +701,9 @@ server {
   include includes/security.conf;
   include includes/static.conf;
   include includes/wordpress.conf;
+
+  # Trust X-Forwarded-For from CloudFront only.
+  include includes/cloudfront-real-ip.conf;
 }
 NGINX
 
@@ -709,6 +715,9 @@ server {
 
   access_log ${SITE_ACCESS_LOG} main;
   error_log ${SITE_ERROR_LOG} ${SITE_ERROR_LOG_LEVEL};
+
+  # Trust X-Forwarded-For from CloudFront only.
+  include includes/cloudfront-real-ip.conf;
 
   location / {
     return 301 https://$host$request_uri;
