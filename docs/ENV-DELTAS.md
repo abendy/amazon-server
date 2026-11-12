@@ -124,10 +124,12 @@ git -C /var/www/html/rsvp cat-file -e origin/<branch>:admin/application/helpers/
    prints each key name with `set` or `MISSING`, or one fixed `ERROR` line and exit 1 when the file
    is missing, unreadable or not a JSON object. It never prints a value, the file's content or the
    decoder's message. A file that is just `[]` passes the object test and shows every key
-   `MISSING`, so treat any `MISSING` as a failed check.
+   `MISSING`, so treat any `MISSING` as a failed check. Run it with RSVP's PHP: the default `php`
+   on production is older and stops at `array_is_list()`.
 
    ```bash
-   sudo -u www-data php -r '$f = "/var/www/html/rsvp/admin/application/config/<environment>/secrets.json"; set_error_handler(function () { return true; }); $j = file_get_contents($f); restore_error_handler(); try { $s = is_string($j) ? json_decode($j, true, 4, JSON_THROW_ON_ERROR) : null; } catch (JsonException $e) { $s = null; } if (!is_array($s) || ($s !== array() && array_is_list($s))) { echo "ERROR: ", $f, " is missing, unreadable or not a JSON object\n"; exit(1); } foreach (array("smtp_user", "smtp_pass", "db_hostname", "db_username", "db_password", "db_database") as $k) { echo $k, ": ", (isset($s[$k]) && is_string($s[$k]) && $s[$k] !== "" ? "set" : "MISSING"), "\n"; }'
+   rsvp_php="$(awk -F= '$1 == "rsvp_php" { print $2 }' /etc/amazon-server.php-sites)"
+   sudo -u www-data "$rsvp_php" -r '$f = "/var/www/html/rsvp/admin/application/config/<environment>/secrets.json"; set_error_handler(function () { return true; }); $j = file_get_contents($f); restore_error_handler(); try { $s = is_string($j) ? json_decode($j, true, 4, JSON_THROW_ON_ERROR) : null; } catch (JsonException $e) { $s = null; } if (!is_array($s) || ($s !== array() && array_is_list($s))) { echo "ERROR: ", $f, " is missing, unreadable or not a JSON object\n"; exit(1); } foreach (array("smtp_user", "smtp_pass", "db_hostname", "db_username", "db_password", "db_database") as $k) { echo $k, ": ", (isset($s[$k]) && is_string($s[$k]) && $s[$k] !== "" ? "set" : "MISSING"), "\n"; }'
    ```
 
 4. Pull as rsvp's `docs/DEPLOYMENT.md` says, then run its staging check.
