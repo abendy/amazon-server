@@ -219,7 +219,8 @@ def remote_creds(remote: Remote, site: Site) -> Creds:
                      env["DB_PASSWORD"], env["DB_NAME"])
     config = f"{site.remote_root}/admin/application/config/{remote.env}/database.php"
     php = (
-        f'define("BASEPATH", "x"); define("ENVIRONMENT", "{remote.env}"); $db = [];'
+        f'define("BASEPATH", "x"); define("ENVIRONMENT", "{remote.env}");'
+        f' define("APPPATH", "{site.remote_root}/admin/application/"); $db = [];'
         f' include "{config}"; $d = $db["default"];'
         ' echo json_encode(["host" => $d["hostname"], "port" => $d["port"] ?? 3306,'
         ' "user" => $d["username"], "password" => $d["password"], "name" => $d["database"]]);'
