@@ -17,6 +17,8 @@ Serving configuration for the Amazon FYC sites — one nginx tree, three sites
 | `nginx/includes/` | Shared rules: security, static caching, gzip, fastcgi, WordPress |
 | `nginx/server_blocks/` | One file per site — routing, docroots, site headers |
 | `docs/ENV-DELTAS.md` | The exhaustive list of values that differ per environment |
+| `docs/SITE-DEPLOY.md`, `docs/THEME-DEPLOY.md`, `docs/EMBED-DEPLOY.md` | How site code, the 2026.1 themes and the RSVP embed reach a host |
+| `scripts/` | Operator scripts: site deploys and smoke checks, theme deploys, data copies |
 
 Everything not in the env-delta list is byte-shared across local, staging, and
 production. A difference outside that list is a bug.
