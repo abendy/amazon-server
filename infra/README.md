@@ -748,7 +748,7 @@ loudly when it is missing. Each row names the step that recreates it and what
 | Origin TLS certificates | provisioner-owned certificate paths | when HTTPS-only origin is chosen | Step 3 | No |
 | Embed password | `/etc/nginx/.htpasswd` | staging | Step 4 | Empty warns, non-empty passes |
 | Reminder ping URL | `/etc/amazon-server.reminder-ping-url` | production | Step 5 ("Dead-man switch") | Owner, mode, empty; else warns |
-| IPv4 TCP mitigation (CVE-2026-98432) | `/etc/sysctl.d/99-no-mptcp.conf`, `/etc/nftables.d/cve-2026-98432.nft`, `/etc/systemd/system/cve-2026-98432.service` | both | `_docs` `security/20261102-cve-2026-98432-tcp-mitigation/rollout.md` and its script | No; use the rollout's verify list |
+| IPv4 TCP mitigation (CVE-2026-98432) | `/etc/sysctl.d/99-no-mptcp.conf`, `/etc/nftables.d/cve-2026-98432.nft`, `/etc/systemd/system/cve-2026-98432.service` | both | `_docs` `platform/plans/archive/20261102-cve-2026-98432-tcp-mitigation/rollout.md` and its script | No; use the rollout's verify list |
 
 Two rules keep this table complete:
 
