@@ -4,7 +4,7 @@
 # RSVP reminder emails. Runs as www-data, which owns the RSVP log directory.
 # PHP_BIN is RSVP's configured PHP version (RSVP_PHP_VERSION in cloud-init.sh).
 # REMINDER_PING_URL is the dead-man-switch ping URL, read at each run from the
-# untracked /etc/amazon-server.reminder-ping-url (infra/README.md, step 5).
+# untracked /etc/amazon-server.reminder-ping-url (docs/HEALTHCHECKS.md).
 # A missing file leaves it empty, and the wrapper then pings nothing.
 # The wrapper's error lines go to syslog, tagged amazon-rsvp-reminders; its
 # normal output is in the run's own log, so stdout is dropped.

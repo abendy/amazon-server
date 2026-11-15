@@ -175,7 +175,7 @@ check_auth_file() {
 }
 
 # check_reminder_ping <environment>: the reminder job's dead-man-switch URL file
-# (infra/README.md, "Dead-man switch"). Production only. Without it the job still
+# (docs/HEALTHCHECKS.md). Production only. Without it the job still
 # runs, but nothing alerts when it stops, so problems warn. Never prints the URL.
 check_reminder_ping() {
   local environment="$1" file="$REMINDER_PING_URL_FILE" facts
