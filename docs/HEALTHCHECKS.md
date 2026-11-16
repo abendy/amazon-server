@@ -60,12 +60,12 @@ It prints `readable`.
 
 ```bash
 sudo amazon-server-converge
-grep -c REMINDER_PING_URL /etc/cron.d/amazon-rsvp-reminders
+grep -c '^[^#].*REMINDER_PING_URL=' /etc/cron.d/amazon-rsvp-reminders
 grep -c 'logger -t amazon-rsvp-reminders' /etc/cron.d/amazon-rsvp-reminders
 sudo amazon-server-converge status | grep 'reminder ping'
 ```
 
-- Both `grep -c` lines print `1`.
+- Both `grep -c` lines print `1`. The first skips comment lines, which also name the variable.
 - The status line reads `ok    reminder ping`, then the file name and `root:www-data 640`. It
   never prints the URL.
 
