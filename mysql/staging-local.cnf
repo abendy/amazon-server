@@ -1,0 +1,8 @@
+# Staging's local MySQL: the settings that differ from the managed servers
+# because this server shares a 2 GB host with nginx and PHP-FPM.
+# infra/mysql-local.sh installs it after server-parity.cnf, on staging only.
+
+[mysqld]
+bind_address            = 127.0.0.1
+mysqlx_bind_address     = 127.0.0.1
+innodb_buffer_pool_size = 256M

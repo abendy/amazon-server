@@ -750,6 +750,155 @@ run_zone_checks() {
   check_db_zone guilds wp "${GUILDS_ROOT}/.env"
 }
 
+# ---- staging local database ------------------------------------------------
+
+# What infra/mysql-local.sh installs on staging. Status reads the installed
+# config files back (the manifest proves they are converge's) and compares each
+# [mysqld] value with the running server.
+MYSQL_CONF_DIR='/etc/mysql/mysql.conf.d'
+MYSQL_PARITY_CONF="${MYSQL_CONF_DIR}/zz-amazon-parity.cnf"
+MYSQL_LOCAL_CONF="${MYSQL_CONF_DIR}/zz-amazon-staging.cnf"
+SWAP_FILE='/swapfile'
+# swapon reports a 1 GiB file one page short, so allow 1 MiB of slack.
+SWAP_MIN_BYTES=$((1024 * 1024 * 1024 - 1024 * 1024))
+
+DB_LINES=()
+DB_PROBLEMS=()
+
+# db_result <ok|FAIL|skip> <label> <detail>; FAIL is drift.
+db_result() {
+  DB_LINES+=("$(printf '  %-4s  %-16s %s' "$1" "$2" "$3")")
+  if [[ "$1" == FAIL ]]; then
+    DB_PROBLEMS+=("local db ${2}: ${3}")
+  fi
+}
+
+# cnf_settings <file>...: "<variable> <value>" for every [mysqld] line, the
+# option name with dashes as underscores and the value unquoted.
+cnf_settings() {
+  local file line section key value
+  for file in "$@"; do
+    [[ -r "$file" ]] || continue
+    section=''
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line="${line%%#*}"
+      if [[ "$line" =~ ^[[:space:]]*\[([^]]+)\] ]]; then
+        section="${BASH_REMATCH[1]}"
+        continue
+      fi
+      [[ "$section" == mysqld ]] || continue
+      [[ "$line" =~ ^[[:space:]]*([A-Za-z0-9_-]+)[[:space:]]*=[[:space:]]*(.*[^[:space:]])[[:space:]]*$ ]] || continue
+      key="${BASH_REMATCH[1]//-/_}"
+      value="${BASH_REMATCH[2]}"
+      value="${value#[\'\"]}"
+      value="${value%[\'\"]}"
+      printf '%s %s\n' "$key" "$value"
+    done < "$file"
+  done
+}
+
+# mysql_norm <value>: the form SELECT @@global prints, lower-cased: sizes in
+# bytes, ON and OFF as 1 and 0.
+mysql_norm() {
+  local value="${1,,}"
+  case "$value" in
+    on | true) value=1 ;;
+    off | false) value=0 ;;
+  esac
+  if [[ "$value" =~ ^([0-9]+)([kmg])$ ]]; then
+    case "${BASH_REMATCH[2]}" in
+      k) value=$((BASH_REMATCH[1] * 1024)) ;;
+      m) value=$((BASH_REMATCH[1] * 1024 * 1024)) ;;
+      g) value=$((BASH_REMATCH[1] * 1024 * 1024 * 1024)) ;;
+    esac
+  fi
+  printf '%s\n' "$value"
+}
+
+# mysql_global <variable>: the running server's global value, read as root
+# over the socket.
+mysql_global() {
+  mysql --batch --skip-column-names --connect-timeout=5 -e "SELECT @@global.${1}" < /dev/null 2> /dev/null
+}
+
+check_db_service() {
+  if systemctl is-active --quiet mysql; then
+    db_result ok service 'mysql active'
+  else
+    db_result FAIL service 'mysql not running'
+  fi
+}
+
+# check_db_listen: every listener on MySQL's ports (3306 classic, 33060 X
+# protocol) is on the loopback address. Ports, not the process name, because
+# ss shows no process owner inside a container.
+check_db_listen() {
+  local addresses outside
+  addresses="$(ss -H -ltn 2> /dev/null | awk '$4 ~ /:(3306|33060)$/ { print $4 }' | sort -u | paste -sd' ' - || true)"
+  if [[ -z "$addresses" ]]; then
+    db_result FAIL listen 'nothing listens on 3306 or 33060'
+    return
+  fi
+  outside="$(tr ' ' '\n' <<< "$addresses" | grep -vE '^(127\.0\.0\.1|\[::1\]):' | paste -sd' ' - || true)"
+  if [[ -n "$outside" ]]; then
+    db_result FAIL listen "${outside} reachable beyond this host, want 127.0.0.1 only"
+  else
+    db_result ok listen "$addresses"
+  fi
+}
+
+check_db_settings() {
+  local key value variable want got checked=0
+  local -a mismatched=()
+  while read -r key value; do
+    variable="$key"
+    [[ "$key" == default_time_zone ]] && variable=time_zone
+    want="$(mysql_norm "$value")"
+    if ! got="$(mysql_global "$variable")"; then
+      db_result FAIL settings "${variable} not read: mysql is down or refused root"
+      return
+    fi
+    got="$(mysql_norm "$got")"
+    checked=$((checked + 1))
+    if [[ "$got" != "$want" ]]; then
+      mismatched+=("${variable} is ${got:-empty}, want ${want}")
+    fi
+  done < <(cnf_settings "$MYSQL_PARITY_CONF" "$MYSQL_LOCAL_CONF")
+  if [[ "$checked" -eq 0 ]]; then
+    db_result FAIL settings "nothing to compare: ${MYSQL_PARITY_CONF} and ${MYSQL_LOCAL_CONF} missing or empty"
+  elif [[ ${#mismatched[@]} -gt 0 ]]; then
+    local joined
+    joined="$(printf '%s; ' "${mismatched[@]}")"
+    db_result FAIL settings "${joined%; }"
+  else
+    db_result ok settings "${checked} values match the installed parity and staging files"
+  fi
+}
+
+check_swap() {
+  local size
+  size="$(swapon --show=NAME,SIZE --bytes --noheadings 2> /dev/null \
+    | awk -v file="$SWAP_FILE" '$1 == file { print $2 }' || true)"
+  if [[ -z "$size" ]]; then
+    db_result FAIL swap "${SWAP_FILE} not active"
+  elif [[ "$size" -lt "$SWAP_MIN_BYTES" ]]; then
+    db_result FAIL swap "${SWAP_FILE} is ${size} bytes, want 1 GiB"
+  else
+    db_result ok swap "${SWAP_FILE} active, ${size} bytes"
+  fi
+}
+
+run_db_checks() {
+  if [[ "$1" != staging ]]; then
+    db_result skip 'local db' "${1} uses its managed databases"
+    return
+  fi
+  check_db_service
+  check_db_listen
+  check_db_settings
+  check_swap
+}
+
 converge_status() {
   local short="$1"
   local environment ref key value line verdict
@@ -844,6 +993,10 @@ converge_status() {
   for line in "${ZONE_PROBLEMS[@]}"; do
     drift_reasons+=("$line")
   done
+  run_db_checks "$environment"
+  for line in "${DB_PROBLEMS[@]}"; do
+    drift_reasons+=("$line")
+  done
 
   if [[ -z "$applied_sha" ]]; then
     verdict='UNAPPLIED'
@@ -861,10 +1014,11 @@ converge_status() {
     for line in "${drift_reasons[@]}"; do
       reasons+="; ${line}"
     done
-    printf '%s: %s (applied %s, remote %s, owned %d changed %d missing, manual %d failed %d warned, patches %d failed %d warned, zones %d failed %d warned)%s\n' \
+    printf '%s: %s (applied %s, remote %s, owned %d changed %d missing, manual %d failed %d warned, patches %d failed %d warned, zones %d failed %d warned, local db %d failed)%s\n' \
       "$environment" "$verdict" "${applied_short:-none}" "${remote_short:-unreachable}" \
       "${#changed_files[@]}" "${#missing_files[@]}" "$MANUAL_FAILED" "$MANUAL_WARNED" \
-      "${#PATCH_PROBLEMS[@]}" "$PATCH_WARNED" "${#ZONE_PROBLEMS[@]}" "$ZONE_WARNED" "$reasons"
+      "${#PATCH_PROBLEMS[@]}" "$PATCH_WARNED" "${#ZONE_PROBLEMS[@]}" "$ZONE_WARNED" \
+      "${#DB_PROBLEMS[@]}" "$reasons"
   else
     printf '%-12s %s\n' environment "$environment" ref "$ref"
     if [[ -n "$applied_sha" ]]; then
@@ -897,6 +1051,8 @@ converge_status() {
     printf '%s\n' "${PATCH_LINES[@]}"
     printf '%-12s %d failed, %d warned\n' zones "${#ZONE_PROBLEMS[@]}" "$ZONE_WARNED"
     printf '%s\n' "${ZONE_LINES[@]}"
+    printf '%-12s %d failed\n' 'local db' "${#DB_PROBLEMS[@]}"
+    printf '%s\n' "${DB_LINES[@]}"
     printf '%-12s %d failed, %d warned\n' manual "$MANUAL_FAILED" "$MANUAL_WARNED"
     printf '%s\n' "${MANUAL_LINES[@]}"
     for line in "${drift_reasons[@]}"; do

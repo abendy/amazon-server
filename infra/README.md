@@ -202,9 +202,27 @@ A run that gets through `nginx -t` and the reload writes two files:
 - `/var/lib/amazon-server/applied.sha256`: a hash of every provisioner-owned file. That
   is the nginx tree (except `.htpasswd` and the package files under `snippets/`), the
   CSP snippet, the PHP-FPM pools, the PHP settings and time zone files, the logrotate and
-  apt-pin files, the templates, the reminder cron where installed, and the shim.
+  apt-pin files, the templates, the reminder cron where installed, the staging MySQL config
+  files, and the shim.
 
 A failed run leaves the previous marker in place.
+
+**Staging database server.** On staging only, `infra/mysql-local.sh` installs MySQL 8.0 from
+Ubuntu's packages, so the staging sites can move off their managed databases. Production
+converge skips it and keeps its managed databases.
+
+- A 1 GiB `/swapfile`, active and in `/etc/fstab`, guards against the out-of-memory killer
+  when MySQL and PHP-FPM peak together.
+- `/etc/mysql/mysql.conf.d/zz-amazon-parity.cnf` is `mysql/server-parity.cnf` as is: the
+  managed servers' `sql_mode`, character set, collation, time zone and limits.
+- `/etc/mysql/mysql.conf.d/zz-amazon-staging.cnf` is `mysql/staging-local.cnf`: listeners on
+  `127.0.0.1` only and a 256 MB buffer pool.
+- The config goes in before the packages, so a first install starts on it. A later config
+  change restarts MySQL; an unchanged one leaves it running.
+
+Status adds a `local db` group on staging. It checks that MySQL runs, that nothing listens on
+3306 or 33060 beyond `127.0.0.1`, that every `[mysqld]` value in both installed files matches
+the running server, and that the swap file is active. Root reads the values over the socket.
 
 **PHP per site.** `infra/cloud-init.sh` sets `RSVP_PHP_VERSION`, `AMPAS_PHP_VERSION`,
 `GUILDS_PHP_VERSION` and `PHP_CLI_VERSION`. `infra/php-sites.sh` derives the rest from them:

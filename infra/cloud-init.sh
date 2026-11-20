@@ -35,6 +35,8 @@ declare \
   PHP_CLI_VERSION='8.4'
 # shellcheck source=infra/php-sites.sh
 source "$(dirname "$SCRIPT_SOURCE")/php-sites.sh"
+# shellcheck source=infra/mysql-local.sh
+source "$(dirname "$SCRIPT_SOURCE")/mysql-local.sh"
 
 # ENV-DELTAS.md: Site and environment values / staging. These are the only
 # environment-specific values rendered into the installed serving tree.
@@ -1010,6 +1012,7 @@ systemctl enable --now nginx
 systemctl reload nginx
 php_retire_stale
 php_purge_unused
+mysql_local_converge
 
 install_reminder_cron
 install_confirmation_cron
