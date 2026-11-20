@@ -134,6 +134,7 @@ check "limits are set" [ "$(cat "$state/timeout") $(cat "$state/memory")" = "25 
 check "the scratch directory is removed" no_scratch
 
 : > "$state/calls.log"
+sleep 2   # a later run must build the same package, byte for byte
 run deploy "$repo" "$target" develop
 check "a repeat deploy exits 0" [ "$rc" = 0 ]
 check "a repeat deploy writes nothing" [ "$(writes)" = 0 ]

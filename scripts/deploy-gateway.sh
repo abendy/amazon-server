@@ -101,7 +101,10 @@ plan|deploy)
   # The function's code is the repo's function/ directory; only that subtree is tested and shipped.
   git -C "$repo" archive "$target:function" | tar -x -C "$work/src"
   ( cd "$work/src" && node --test ) > "$work/test.log" 2>&1 || { tail -n 25 "$work/test.log"; die "tests failed at $target; nothing was changed"; }
-  git -C "$repo" archive --format=zip -o "$work/function.zip" "$target:function" index.js gateway.js
+  # Stamp the files with the commit's time. Without it git stamps a subtree with the time of the
+  # run, so the same commit would hash differently on every run and never read as already live.
+  when=$(git -C "$repo" show -s --format=%cI "$target")
+  git -C "$repo" archive --format=zip --mtime="$when" -o "$work/function.zip" "$target:function" index.js gateway.js
   new_hash=$(openssl dgst -sha256 -binary "$work/function.zip" | openssl base64)
   echo "target  $target ($branch), tests pass, package hash $new_hash"
 
