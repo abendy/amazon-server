@@ -18,8 +18,8 @@ For each site, in order:
        real            real attendee rows. The mini only, after warnings and two prompts.
      Outside real, the staff mailboxes (screenings.rsvp_email, cities.rsvp_email,
      movies.reply_to_email) are masked the same way (staff-<hash>@example.invalid). Admin users
-     keep their real addresses so they can log in. ci_sessions and login_attempts never copy
-     rows.
+     keep their real addresses so they can log in. ci_sessions, login_attempts and audit_log
+     never copy rows (the audit log holds deleted attendees' names and emails).
   3. Replaces each target database with the dump. Every target table is dropped first, so the
      target ends as an exact copy. A local WordPress import also becomes the site's re-seed copy
      (_db/<name>.sql). WordPress targets then drop the titles-catalog transient.
@@ -76,8 +76,9 @@ AWS_REGION = "us-west-2"
 AWS_PROFILE = os.environ.get("SYNC_AWS_PROFILE", "amazon-lightsail-staging")
 MAX_SIZE = os.environ.get("SYNC_MAX_SIZE", "5m")
 
-# RSVP rows that never copy: transient state.
-RSVP_TRANSIENT = ["ci_sessions", "login_attempts"]
+# RSVP rows that never copy: transient state, and the admin audit log, whose delete rows keep
+# attendee names and emails.
+RSVP_TRANSIENT = ["ci_sessions", "login_attempts", "audit_log"]
 # Personal data, column by column, and how each column is masked.
 ATTENDEE_MASKS = {
     "attendees": {"first_name": "guest", "last_name": "row_id", "email": "attendee_email",
