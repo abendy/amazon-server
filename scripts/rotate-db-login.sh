@@ -11,6 +11,9 @@
 #     password in the Lightsail console afterwards: no site uses it any more.
 #   - <site>_app already: set a new password on it, then write the file straight away. Only
 #     connections opened in that moment can fail.
+# A WordPress .env also gets a comment above its database lines saying so. The admin login is
+# for the console and emergencies only; never put it back in a site file (docs/ENV-DELTAS.md,
+# "Database logins").
 # --check reports which case applies and changes nothing.
 #
 # Writes a root-only backup of the file first (it holds the old password: delete it once the
@@ -118,6 +121,19 @@ if ($isJson) {
             $lines[$i] = $m[1] . $m[2] . $m[3] . $q . $values[$m[2]] . $q;
         }
     }
+    // Say which login this is, right above the database lines; replace any earlier copy.
+    $note = [
+        "# Site login ({$appUser}), rotated with _server scripts/rotate-db-login.sh.",
+        '# The admin login from the Lightsail console is not used here; changing it needs no edit to this file.',
+    ];
+    $lines = array_values(array_filter($lines, fn ($l) => !str_starts_with($l, '# Site login (')
+        && !str_starts_with($l, '# The admin login from the Lightsail console')));
+    foreach ($lines as $i => $line) {
+        if (preg_match('/^\s*DB_[A-Z_]+\s*=/', $line)) {
+            array_splice($lines, $i, 0, $note);
+            break;
+        }
+    }
     $out = implode("\n", $lines);
 }
 $stat = stat($file);
@@ -171,7 +187,8 @@ Next:
   1. Check the site: its admin and one page that reads the database (RSVP: one title's RSVP list).
   2. Check the log has no database errors (RSVP: application/logs/log-$(date -u +%F).php).
   3. Delete the backup once the checks pass: rm -f '${backup}'
-  4. If the old login was the admin, change its password in the Lightsail console.
+  4. If the old login was the admin, change its password in the Lightsail console, and keep it
+     out of the site file: no site uses it.
 EOF
 if [[ "$(cat "$case_file")" == admin ]]; then
   printf "Rollback until the admin password changes: cp -p '%s' '%s'%s\n" "$backup" "$file" \

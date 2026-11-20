@@ -151,13 +151,25 @@ git -C /var/www/html/rsvp cat-file -e origin/<branch>:admin/application/helpers/
    Look for its success, and for no `secrets:` or SMTP error lines in the app log.
 5. Revoke the old credential in AWS.
 
+### Database logins
+
+Each managed database has two logins.
+
+- **Admin** (`wordpress` or `dbmasteruser`): the only login the Lightsail console manages. No site
+  file uses it. Keep its password for emergencies, and change it in the console whenever you
+  like: no site file changes.
+- **Site login** (`<site>_app`): the one in the site's `.env` or `secrets.json`. Rotate it only
+  with `scripts/rotate-db-login.sh` (below).
+
+Never put the admin login in a site file. A site on the admin goes offline whenever the admin
+password changes: the console puts the database into a modifying state and ends the old password
+at once. Each WordPress `.env` carries a comment saying this above its database lines; RSVP's
+`secrets.json` cannot hold one.
+
 ### Rotating the database password
 
-Each Lightsail managed database has one console-managed login, its admin, and the sites logged in
-as that admin. Changing the admin password in the console puts the database into a modifying
-state and ends the old password at once, so the site fails until its file holds the new one.
-Rotate through a site user instead. The admin can create one with SQL (`CREATE USER`), though the
-console never shows it.
+A site still on the admin login moves to its own login on the first run. The admin creates that
+login with SQL (`CREATE USER`), though the console never shows it.
 
 On the instance, for `rsvp`, `ampas` or `guilds`:
 
@@ -178,7 +190,7 @@ sudo bash /opt/amazon-server/scripts/rotate-db-login.sh rsvp
    reads the same file on its next run.
 5. Delete the backup it names, since it holds the old password.
 6. After the first rotation, change the admin password in the Lightsail console. No site uses it
-   any more, so the modifying state costs nothing.
+   any more, so the modifying state costs nothing. Do not copy it into the site file.
 
 Staging's sites use a local MySQL server; the script refuses it. Rotate those logins as MySQL root
 (`ALTER USER`) and update `/root/amazon-staging/local-db.env`.
