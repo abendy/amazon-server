@@ -761,6 +761,20 @@ scripts/update-cloudfront-ranges.py
 
 Commit the refreshed file, then converge staging and production.
 
+## Blocked agents and viewers
+
+`nginx/includes/security.conf` returns 403 to every site, before any page or file is served, for
+two lists in `nginx/nginx.conf`:
+
+- `$blocked_agent`: user agents. Today only Amazon's DyePack scanner (`Chrome/51.0.2704.103`).
+- `$blocked_viewer`: viewer addresses and ranges, listed with the reason for each in
+  `nginx/includes/blocked-viewers.conf`. The check reads the viewer address that
+  `cloudfront-real-ip.conf` sets, so it never blocks a CloudFront edge.
+
+To block an address, add a line to `blocked-viewers.conf` with what it did and when, run `nginx -t`,
+commit, and converge. A blocked request still reaches the origin through the CDN; it only stops
+the page and its files from loading.
+
 ## Staging verification
 
 Run the ratified must-serve matrix in
