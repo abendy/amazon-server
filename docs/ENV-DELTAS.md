@@ -153,13 +153,35 @@ git -C /var/www/html/rsvp cat-file -e origin/<branch>:admin/application/helpers/
 
 ### Rotating the database password
 
-1. Create the new login on the database server, keeping the old one working. Where the database
-   has only one admin login and changing it ends the old password at once, do steps 1 and 2 back to
-   back: requests fail between them.
-2. Put the new `db_username` and `db_password` in the file, and reload PHP-FPM as in the SES steps.
-3. Check: log in to the admin, open one title's RSVP list, and confirm no `secrets:` or database
-   error lines in the app log. The reminder cron reads the same file on its next run.
-4. Remove the old login on the database server.
+Each Lightsail managed database has one console-managed login, its admin, and the sites logged in
+as that admin. Changing the admin password in the console puts the database into a modifying
+state and ends the old password at once, so the site fails until its file holds the new one.
+Rotate through a site user instead. The admin can create one with SQL (`CREATE USER`), though the
+console never shows it.
+
+On the instance, for `rsvp`, `ampas` or `guilds`:
+
+```bash
+sudo bash /opt/amazon-server/scripts/rotate-db-login.sh rsvp --check
+sudo bash /opt/amazon-server/scripts/rotate-db-login.sh rsvp
+```
+
+1. `--check` reports who the site logs in as and what a rotation would do. It changes nothing.
+2. Logged in as the admin, the script creates or resets `<site>_app`, grants it the site's schema
+   only, tests it, then points the site's file at it (RSVP's `secrets.json`, or the WordPress
+   `.env`). The admin keeps working throughout, so the site never loses its database. Logged in
+   as `<site>_app` already, it sets a new password and writes the file straight away.
+3. It keeps the file's owner and mode, writes a root-only backup beside it, reloads RSVP's PHP-FPM
+   pool, and prints no password.
+4. Check: log in to the admin and open one page that reads the database (RSVP: one title's RSVP
+   list). For RSVP, confirm no `secrets:` or database error lines in the app log. The reminder cron
+   reads the same file on its next run.
+5. Delete the backup it names, since it holds the old password.
+6. After the first rotation, change the admin password in the Lightsail console. No site uses it
+   any more, so the modifying state costs nothing.
+
+Staging's sites use a local MySQL server; the script refuses it. Rotate those logins as MySQL root
+(`ALTER USER`) and update `/root/amazon-staging/local-db.env`.
 
 ## Local database publishing
 
