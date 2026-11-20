@@ -735,7 +735,9 @@ loudly when it is missing. Each row names the step that recreates it and what
 |---|---|---|---|---|
 | Environment marker | `/etc/amazon-server.env` | production (absent means staging) | Bootstrap ("Production instance") | Prints it |
 | Converge ref | `/etc/amazon-server.ref` | both | Bootstrap; edited for a pre-land test build (ground rule 3) | Prints it |
-| Managed-database handoff | `/root/amazon-staging/db.env` | both | Step 1 | Owner, mode, key names |
+| Managed-database handoff | `/root/amazon-staging/db.env` | production (staging has no managed databases since 2026-11-20) | Step 1 | Owner, mode, key names; absent only warns |
+| Local database data and logins | MySQL schemas `ampas`, `guilds`, `rsvp` and their users; passwords in `/root/amazon-staging/local-db.env` (root, 600) | staging | `_docs` `platform/plans/archive/20261120-staging-db-on-instance/` (copy script), or `scripts/sync-data.py` from production | The server only (`local db` group), not the data |
+| Database move dumps and login backups | `/root/amazon-staging/db-move/` | staging | Not recreated: a record of the 2026-11-20 move | No |
 | Deploy keys and SSH aliases | `~ubuntu/.ssh/` | both | Step 2 | Each site's alias; not the keys |
 | Site releases | `/var/www/html/{rsvp,amazon-studios-ampas,amazon-studios-guilds}` | both | Step 2 | No |
 | WordPress `.env` files | each WP repo root | both | Step 2 | Group, mode, key names |
