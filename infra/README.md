@@ -743,8 +743,8 @@ systemctl list-timers --all
 
 ## CloudFront address list
 
-The RSVP server block takes the client address from `X-Forwarded-For` only when one of
-CloudFront's origin-facing addresses made the connection. Every Lightsail distribution reaches
+The RSVP, AMPAS and Guilds server blocks take the client address from `X-Forwarded-For` only
+when one of CloudFront's origin-facing addresses made the connection. Every Lightsail distribution reaches
 the origin from those addresses. Any other caller, including a direct-origin check, keeps its own
 address, and a forged header changes nothing. The booking throttle and the API's booking checks
 both key on that address.
