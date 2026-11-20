@@ -19,6 +19,7 @@ Serving configuration for the Amazon FYC sites — one nginx tree, three sites
 | `docs/ENV-DELTAS.md` | The exhaustive list of values that differ per environment |
 | `docs/SITE-DEPLOY.md`, `docs/THEME-DEPLOY.md`, `docs/EMBED-DEPLOY.md` | How site code, the 2026.1 themes and the RSVP embed reach a host |
 | `docs/HEALTHCHECKS.md` | The healthchecks.io alert on the production reminder job: setup and test |
+| `docs/GATEWAY-DEPLOY.md` | How the Indee gateway's Lambda function is deployed and rolled back |
 | `scripts/` | Operator scripts: site deploys and smoke checks, theme deploys, data copies |
 
 Everything not in the env-delta list is byte-shared across local, staging, and
