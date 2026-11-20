@@ -875,6 +875,22 @@ check_db_settings() {
   fi
 }
 
+# check_db_named_zones: the server converts to a named zone, as RSVP's
+# screening clock does for each city.
+check_db_named_zones() {
+  local converted
+  converted="$(mysql --batch --skip-column-names --connect-timeout=5 \
+    -e "SELECT CONVERT_TZ('2026-01-01 12:00:00', '+00:00', 'America/New_York')" < /dev/null 2> /dev/null)" || {
+    db_result FAIL 'named zones' 'not read: mysql is down or refused root'
+    return
+  }
+  if [[ "$converted" == '2026-01-01 07:00:00' ]]; then
+    db_result ok 'named zones' 'loaded: America/New_York converts'
+  else
+    db_result FAIL 'named zones' "America/New_York gives ${converted:-nothing}: time zone tables not loaded"
+  fi
+}
+
 check_swap() {
   local size
   size="$(swapon --show=NAME,SIZE --bytes --noheadings 2> /dev/null \
@@ -896,6 +912,7 @@ run_db_checks() {
   check_db_service
   check_db_listen
   check_db_settings
+  check_db_named_zones
   check_swap
 }
 

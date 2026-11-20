@@ -219,10 +219,13 @@ converge skips it and keeps its managed databases.
   `127.0.0.1` only and a 256 MB buffer pool.
 - The config goes in before the packages, so a first install starts on it. A later config
   change restarts MySQL; an unchanged one leaves it running.
+- The named time zone tables load from the host's tzdata, and reload when the `tzdata` package
+  changes (`/var/lib/amazon-server/mysql-tzdata.version`). RSVP's screening clock converts to
+  each city's zone with `CONVERT_TZ`, which returns NULL for a zone the server has not loaded.
 
 Status adds a `local db` group on staging. It checks that MySQL runs, that nothing listens on
 3306 or 33060 beyond `127.0.0.1`, that every `[mysqld]` value in both installed files matches
-the running server, and that the swap file is active. Root reads the values over the socket.
+the running server, that a named zone converts, and that the swap file is active. Root reads the values over the socket.
 
 **PHP per site.** `infra/cloud-init.sh` sets `RSVP_PHP_VERSION`, `AMPAS_PHP_VERSION`,
 `GUILDS_PHP_VERSION` and `PHP_CLI_VERSION`. `infra/php-sites.sh` derives the rest from them:

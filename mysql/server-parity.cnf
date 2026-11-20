@@ -16,6 +16,7 @@ default_time_zone             = '+00:00'
 default_authentication_plugin = mysql_native_password
 max_allowed_packet            = 64M
 local_infile                  = ON
+performance_schema            = OFF
 
 [client]
 default_character_set         = utf8mb4

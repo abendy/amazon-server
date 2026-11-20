@@ -15,6 +15,7 @@ MYSQL_LOCAL_CONF="${MYSQL_CONF_DIR}/zz-amazon-staging.cnf"
 MYSQL_PACKAGES=(mysql-server-8.0 mysql-client-8.0)
 SWAP_FILE='/swapfile'
 SWAP_SIZE='1G'
+MYSQL_TZ_MARKER='/var/lib/amazon-server/mysql-tzdata.version'
 
 # swap_ensure: a 1 GiB swap file, active now and at boot. It guards against the
 # out-of-memory killer when MySQL and PHP-FPM peak together; it is not working
@@ -33,8 +34,25 @@ swap_ensure() {
   fi
 }
 
+# mysql_load_time_zones: the named time zones, loaded from the host's tzdata.
+# RSVP's screening clock converts to each city's zone with CONVERT_TZ, which
+# returns NULL for a named zone the server has not loaded; the managed servers
+# have them. Reloads when the tzdata package changes or the tables are empty.
+mysql_load_time_zones() {
+  local tzdata loaded
+  tzdata="$(dpkg-query -W -f='${Version}' tzdata)"
+  loaded="$(mysql --batch --skip-column-names -e 'SELECT COUNT(*) FROM mysql.time_zone_name')"
+  if [[ "$loaded" -gt 0 && "$(cat "$MYSQL_TZ_MARKER" 2> /dev/null || true)" == "$tzdata" ]]; then
+    return 0
+  fi
+  # It skips the zoneinfo files that are not zones, with a warning for each.
+  mysql_tzinfo_to_sql /usr/share/zoneinfo 2> /dev/null | mysql --batch mysql
+  install -d -o root -g root -m 0755 "$(dirname "$MYSQL_TZ_MARKER")"
+  printf '%s\n' "$tzdata" > "$MYSQL_TZ_MARKER"
+}
+
 # mysql_local_converge: on staging, the swap file, both config files, the
-# server and client packages, and a running server. The config goes in before
+# server and client packages, a running server, and its time zone tables. The config goes in before
 # the packages, so a first install starts on it; a later config change restarts
 # the server, and an unchanged one leaves it running.
 mysql_local_converge() {
@@ -59,4 +77,5 @@ mysql_local_converge() {
     systemctl restart mysql
   fi
   systemctl enable --now mysql
+  mysql_load_time_zones
 }

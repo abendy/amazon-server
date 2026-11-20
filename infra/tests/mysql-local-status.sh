@@ -2,8 +2,10 @@
 # Staging local-database checks in infra/converge.sh status. Sources the script
 # for its functions, points it at copies of the repo's two MySQL config files,
 # stubs systemctl, ss, mysql and swapon, and runs the checks four times:
-#   1. current: running, local-only, every value as configured, swap active
-#   2. drifted: listening on every address, two values off, no swap
+#   1. current: running, local-only, every value as configured, named zones
+#      loaded, swap active
+#   2. drifted: listening on every address, two values off, no named zones,
+#      no swap
 #   3. down: mysql stopped, so nothing is read
 #   4. production: skipped, it keeps its managed databases
 # Exit status is the number of failed checks.
@@ -27,6 +29,7 @@ MYSQL_LOCAL_CONF="${WORK_DIR}/staging.cnf"
 SERVICE_ACTIVE=true
 LISTENERS=()
 SWAP_LINE=''
+ZONE_REPLY=''
 declare -A VARS=()
 
 # The stubs below shadow the real commands that converge.sh calls.
@@ -44,6 +47,10 @@ ss() {
 mysql() {
   local query="${*: -1}" name
   [[ "$SERVICE_ACTIVE" == true ]] || return 1
+  if [[ "$query" == *CONVERT_TZ* ]]; then
+    printf '%s\n' "$ZONE_REPLY"
+    return 0
+  fi
   name="${query#SELECT @@global.}"
   [[ -v "VARS[$name]" ]] || return 1
   printf '%s\n' "${VARS[$name]}"
@@ -60,6 +67,7 @@ current_vars() {
     [default_authentication_plugin]='mysql_native_password'
     [max_allowed_packet]='67108864'
     [local_infile]='1'
+    [performance_schema]='0'
     [bind_address]='127.0.0.1'
     [mysqlx_bind_address]='127.0.0.1'
     [innodb_buffer_pool_size]='268435456'
@@ -97,11 +105,13 @@ reset_db_state
 SERVICE_ACTIVE=true
 LISTENERS=('127.0.0.1:3306' '127.0.0.1:33060')
 SWAP_LINE='/swapfile 1073737728'
+ZONE_REPLY='2026-01-01 07:00:00'
 current_vars
 run_db_checks staging
 expect 'service' '^  ok .* mysql active$'
 expect 'listen' '^  ok .* 127\.0\.0\.1:3306 127\.0\.0\.1:33060$'
-expect 'settings' '^  ok .* 10 values match'
+expect 'settings' '^  ok .* 11 values match'
+expect 'named zones' '^  ok .* loaded: America/New_York converts$'
 expect 'swap' '^  ok .* /swapfile active, 1073737728 bytes$'
 expect_failed 0
 
@@ -109,6 +119,7 @@ printf '== drifted\n'
 reset_db_state
 LISTENERS=('0.0.0.0:3306' '127.0.0.1:33060')
 SWAP_LINE=''
+ZONE_REPLY='NULL'
 current_vars
 VARS[sql_mode]='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES'
 VARS[innodb_buffer_pool_size]='134217728'
@@ -116,8 +127,9 @@ run_db_checks staging
 expect 'service' '^  ok '
 expect 'listen' '^  FAIL .* 0\.0\.0\.0:3306 reachable beyond this host'
 expect 'settings' '^  FAIL .* sql_mode is only_full_group_by,strict_trans_tables, want no_engine_substitution; innodb_buffer_pool_size is 134217728, want 268435456$'
+expect 'named zones' '^  FAIL .* America/New_York gives NULL: time zone tables not loaded$'
 expect 'swap' '^  FAIL .* /swapfile not active$'
-expect_failed 3
+expect_failed 4
 
 printf '== down\n'
 reset_db_state
@@ -128,8 +140,9 @@ run_db_checks staging
 expect 'service' '^  FAIL .* mysql not running$'
 expect 'listen' '^  FAIL .* nothing listens on 3306 or 33060$'
 expect 'settings' '^  FAIL .* not read: mysql is down or refused root$'
+expect 'named zones' '^  FAIL .* not read: mysql is down or refused root$'
 expect 'swap' '^  ok '
-expect_failed 3
+expect_failed 4
 
 printf '== production\n'
 reset_db_state
