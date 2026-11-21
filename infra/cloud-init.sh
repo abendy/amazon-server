@@ -62,17 +62,14 @@ STAGING_GUILDS_FPM_SOCKET="$(php_site_socket guilds)"
 STAGING_GUILDS_LOG_ROOT='/var/log/nginx/guilds'
 
 # ENV-DELTAS.md: Site-specific shared-policy values and RSVP's staging embed
-# routing/cache values. The legacy /rsvp/ rule stays no-cache; the generic
-# RSVP CSS/JS rule uses the deployed staging values.
+# routing/cache values. The generic RSVP CSS/JS rule uses the deployed staging
+# values.
 STAGING_RSVP_FRAME_OPTIONS=''
 STAGING_RSVP_ASSET_EXPIRES='1h'
 STAGING_RSVP_ASSET_CACHE_CONTROL='public, must-revalidate'
 STAGING_RSVP_CSS_EXPIRES='1h'
 STAGING_RSVP_CSS_CACHE_CONTROL='public, must-revalidate'
 STAGING_RSVP_CSS_PRAGMA=''
-STAGING_RSVP_LEGACY_CSS_EXPIRES='-1'
-STAGING_RSVP_LEGACY_CSS_CACHE_CONTROL='no-store, no-cache, must-revalidate'
-STAGING_RSVP_LEGACY_CSS_PRAGMA=''
 STAGING_RSVP_EMBED_CORS_ORIGIN='*'
 STAGING_RSVP_EMBED_CORS_METHODS='GET, OPTIONS'
 STAGING_RSVP_EMBED_CORS_HEADERS='Content-Type'
@@ -180,8 +177,7 @@ export STAGING_RSVP_ACCESS_LOG STAGING_RSVP_SCRIPTS_LOG STAGING_RSVP_ERROR_LOG
 export STAGING_RSVP_EMBED_ACCESS_LOG STAGING_RSVP_FRAME_OPTIONS
 export STAGING_RSVP_ASSET_EXPIRES STAGING_RSVP_ASSET_CACHE_CONTROL
 export STAGING_RSVP_CSS_EXPIRES STAGING_RSVP_CSS_CACHE_CONTROL STAGING_RSVP_CSS_PRAGMA
-export STAGING_RSVP_LEGACY_CSS_EXPIRES STAGING_RSVP_LEGACY_CSS_CACHE_CONTROL
-export STAGING_RSVP_LEGACY_CSS_PRAGMA STAGING_RSVP_EMBED_CORS_ORIGIN
+export STAGING_RSVP_EMBED_CORS_ORIGIN
 export STAGING_RSVP_EMBED_CORS_METHODS STAGING_RSVP_EMBED_CORS_HEADERS
 export STAGING_RSVP_EMBED_CACHE_EXPIRES STAGING_RSVP_EMBED_CACHE_CONTROL
 export STAGING_RSVP_TLS_CERT STAGING_RSVP_TLS_KEY STAGING_ACME_DOCROOT
@@ -198,7 +194,7 @@ export STAGING_GUILDS_CSS_EXPIRES STAGING_GUILDS_CSS_CACHE_CONTROL
 export STAGING_GUILDS_CSS_PRAGMA STAGING_GUILDS_TLS_CERT STAGING_GUILDS_TLS_KEY
 export SITE_ERROR_LOG_LEVEL
 
-STAGING_TEMPLATE_VARS="\${STAGING_RSVP_SERVER_NAME} \${STAGING_RSVP_HTTP_CI_ENV} \${STAGING_RSVP_DOCROOT} \${STAGING_RSVP_PUBLIC_DOCROOT} \${STAGING_RSVP_EMBED_DOCROOT} \${STAGING_RSVP_FPM_SOCKET} \${STAGING_RSVP_AUTH_FILE} \${STAGING_RSVP_ACCESS_LOG} \${STAGING_RSVP_SCRIPTS_LOG} \${STAGING_RSVP_ERROR_LOG} \${STAGING_RSVP_EMBED_ACCESS_LOG} \${STAGING_RSVP_FRAME_OPTIONS} \${STAGING_RSVP_ASSET_EXPIRES} \${STAGING_RSVP_ASSET_CACHE_CONTROL} \${STAGING_RSVP_CSS_EXPIRES} \${STAGING_RSVP_CSS_CACHE_CONTROL} \${STAGING_RSVP_CSS_PRAGMA} \${STAGING_RSVP_LEGACY_CSS_EXPIRES} \${STAGING_RSVP_LEGACY_CSS_CACHE_CONTROL} \${STAGING_RSVP_LEGACY_CSS_PRAGMA} \${STAGING_RSVP_EMBED_CORS_ORIGIN} \${STAGING_RSVP_EMBED_CORS_METHODS} \${STAGING_RSVP_EMBED_CORS_HEADERS} \${STAGING_RSVP_EMBED_CACHE_EXPIRES} \${STAGING_RSVP_EMBED_CACHE_CONTROL} \${STAGING_RSVP_TLS_CERT} \${STAGING_RSVP_TLS_KEY} \${STAGING_ACME_DOCROOT} \${STAGING_CSP_INCLUDE}"
+STAGING_TEMPLATE_VARS="\${STAGING_RSVP_SERVER_NAME} \${STAGING_RSVP_HTTP_CI_ENV} \${STAGING_RSVP_DOCROOT} \${STAGING_RSVP_PUBLIC_DOCROOT} \${STAGING_RSVP_EMBED_DOCROOT} \${STAGING_RSVP_FPM_SOCKET} \${STAGING_RSVP_AUTH_FILE} \${STAGING_RSVP_ACCESS_LOG} \${STAGING_RSVP_SCRIPTS_LOG} \${STAGING_RSVP_ERROR_LOG} \${STAGING_RSVP_EMBED_ACCESS_LOG} \${STAGING_RSVP_FRAME_OPTIONS} \${STAGING_RSVP_ASSET_EXPIRES} \${STAGING_RSVP_ASSET_CACHE_CONTROL} \${STAGING_RSVP_CSS_EXPIRES} \${STAGING_RSVP_CSS_CACHE_CONTROL} \${STAGING_RSVP_CSS_PRAGMA} \${STAGING_RSVP_EMBED_CORS_ORIGIN} \${STAGING_RSVP_EMBED_CORS_METHODS} \${STAGING_RSVP_EMBED_CORS_HEADERS} \${STAGING_RSVP_EMBED_CACHE_EXPIRES} \${STAGING_RSVP_EMBED_CACHE_CONTROL} \${STAGING_RSVP_TLS_CERT} \${STAGING_RSVP_TLS_KEY} \${STAGING_ACME_DOCROOT} \${STAGING_CSP_INCLUDE}"
 SITE_TEMPLATE_VARS="\${SITE_SERVER_NAME} \${SITE_DOCROOT} \${SITE_FPM_SOCKET} \${SITE_ACCESS_LOG} \${SITE_SCRIPTS_LOG} \${SITE_ERROR_LOG} \${SITE_ERROR_LOG_LEVEL} \${SITE_FRAME_OPTIONS} \${SITE_ASSET_EXPIRES} \${SITE_ASSET_CACHE_CONTROL} \${SITE_CSS_EXPIRES} \${SITE_CSS_CACHE_CONTROL} \${SITE_CSS_PRAGMA} \${SITE_TLS_CERT} \${SITE_TLS_KEY}"
 
 export DEBIAN_FRONTEND='noninteractive'
@@ -410,18 +406,6 @@ render_rsvp_static_include() {
 
   awk '/^# W3 Total Cache rules retained/{exit} {print}' \
     "$NGINX_ROOT/includes/static.conf" > "$rsvp_static_include"
-  local css_cache_control="\\\$site_css_cache_control"
-  local legacy_css_cache_control="\$site_legacy_css_cache_control"
-  local css_expires="\\\$site_css_expires"
-  local legacy_css_expires="\$site_legacy_css_expires"
-  local css_pragma="\\\$site_css_pragma"
-  local legacy_css_pragma="\$site_legacy_css_pragma"
-  sed -i "0,/add_header Cache-Control ${css_cache_control} always;/s//add_header Cache-Control ${legacy_css_cache_control} always;/" \
-    "$rsvp_static_include"
-  sed -i "0,/expires ${css_expires};/s//expires ${legacy_css_expires};/" \
-    "$rsvp_static_include"
-  sed -i "0,/add_header Pragma ${css_pragma} always;/s//add_header Pragma ${legacy_css_pragma} always;/" \
-    "$rsvp_static_include"
   sed -i '/css/s#\^/(?!admin/)#\^/#' "$rsvp_static_include"
   chown root:root "$rsvp_static_include"
   chmod 0644 "$rsvp_static_include"
@@ -450,9 +434,6 @@ server {
   set $site_css_expires ${STAGING_RSVP_CSS_EXPIRES};
   set $site_css_cache_control "${STAGING_RSVP_CSS_CACHE_CONTROL}";
   set $site_css_pragma "${STAGING_RSVP_CSS_PRAGMA}";
-  set $site_legacy_css_expires ${STAGING_RSVP_LEGACY_CSS_EXPIRES};
-  set $site_legacy_css_cache_control "${STAGING_RSVP_LEGACY_CSS_CACHE_CONTROL}";
-  set $site_legacy_css_pragma "${STAGING_RSVP_LEGACY_CSS_PRAGMA}";
   set $rsvp_http_ci_env ${STAGING_RSVP_HTTP_CI_ENV};
 
   access_log ${STAGING_RSVP_ACCESS_LOG} main;
@@ -576,9 +557,6 @@ server {
   set $site_css_expires ${STAGING_RSVP_CSS_EXPIRES};
   set $site_css_cache_control "${STAGING_RSVP_CSS_CACHE_CONTROL}";
   set $site_css_pragma "${STAGING_RSVP_CSS_PRAGMA}";
-  set $site_legacy_css_expires ${STAGING_RSVP_LEGACY_CSS_EXPIRES};
-  set $site_legacy_css_cache_control "${STAGING_RSVP_LEGACY_CSS_CACHE_CONTROL}";
-  set $site_legacy_css_pragma "${STAGING_RSVP_LEGACY_CSS_PRAGMA}";
   set $rsvp_http_ci_env ${STAGING_RSVP_HTTP_CI_ENV};
 
   access_log ${STAGING_RSVP_ACCESS_LOG} main;
