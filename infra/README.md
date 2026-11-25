@@ -105,9 +105,9 @@ terraform apply production.tfplan
 ```
 
 Keep production names out of `terraform.tfvars` so a later plan in the default workspace can
-never propose replacing staging. `production.tfvars` also sets `server_branch = "master"` and
-`auto_snapshot_time = "09:00"`: production takes daily automatic snapshots, and a plan without
-that value would turn them off. Run plans from this directory: the workspaces and their state
+never propose replacing staging. `production.tfvars` also sets `server_branch = "master"`, and both
+workspaces set `auto_snapshot_time = "11:00"` (6 AM Eastern in winter, 7 AM in summer): each
+instance takes daily automatic snapshots, and a plan without that value would turn them off. Run plans from this directory: the workspaces and their state
 live here, and `terraform workspace new` elsewhere starts an empty one. Every post-apply manual step below applies unchanged; the
 production Guilds host binding has no deployed reference and needs an explicit driver
 ratification before any CDN origin flip.

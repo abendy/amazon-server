@@ -51,7 +51,7 @@ variable "environment" {
 }
 
 variable "auto_snapshot_time" {
-  description = "UTC hour for daily automatic snapshots, as HH:00 (production uses 09:00). Null leaves them off."
+  description = "UTC hour for daily automatic snapshots, as HH:00 (both instances use 11:00). Null leaves them off."
   type        = string
   default     = null
 }

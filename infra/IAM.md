@@ -1,4 +1,4 @@
-# IAM for Lightsail Terraform, backups and the Indee gateway
+# IAM for Lightsail Terraform, backups, the Indee gateway and metrics reads
 
 Create a dedicated IAM group and user for this module. The Terraform profile manages only the
 Lightsail instance, static IP, attachment, and public ports in this directory. Terraform does not
@@ -387,3 +387,116 @@ aws lambda get-runtime-management-config --profile amazon-gateway-deploy --regio
 Always pass a `--query` that leaves the values out, on every Lambda read and write: the update
 calls answer with the full settings too. The CLI filters after the full answer arrives, so the
 values still reach the machine. The query only keeps them off the screen and out of logs.
+
+## Read-only metrics profile
+
+One key that reads what cost and load work needs and changes nothing: Lightsail inventory and
+metrics (instances, managed databases, CDN distributions, disks, snapshots), CloudWatch metrics
+and alarms, CloudFront distribution settings, Cost Explorer, and the `fyc-*` CloudFront and WAF
+log groups. It is separate from the Terraform, backup and gateway keys.
+
+It is narrower than AWS's `ReadOnlyAccess`, which would also read every S3 object and other
+clients' resources in the account. It cannot read database passwords, S3 objects or secrets.
+
+### Create the read-only policy
+
+Create a customer managed policy named `amazon-fyc-read-metrics`. Lightsail, CloudWatch and Cost
+Explorer reads accept only `Resource: "*"`; the action list is the boundary. Log reads are limited
+to the move plan's log groups.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "LightsailInventoryAndMetrics",
+      "Effect": "Allow",
+      "Action": [
+        "lightsail:GetAutoSnapshots",
+        "lightsail:GetDisks",
+        "lightsail:GetDistributionBundles",
+        "lightsail:GetDistributionMetricData",
+        "lightsail:GetDistributions",
+        "lightsail:GetDomains",
+        "lightsail:GetInstanceMetricData",
+        "lightsail:GetInstanceSnapshots",
+        "lightsail:GetInstances",
+        "lightsail:GetRelationalDatabaseMetricData",
+        "lightsail:GetRelationalDatabaseSnapshots",
+        "lightsail:GetRelationalDatabases",
+        "lightsail:GetStaticIps"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudWatchAndCloudFrontReads",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:GetDistribution",
+        "cloudfront:GetDistributionConfig",
+        "cloudfront:ListDistributions",
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CostExplorerReads",
+      "Effect": "Allow",
+      "Action": [
+        "ce:GetCostAndUsage",
+        "ce:GetCostForecast",
+        "ce:GetDimensionValues"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ListLogGroups",
+      "Effect": "Allow",
+      "Action": [
+        "logs:DescribeLogGroups",
+        "logs:GetQueryResults",
+        "logs:StopQuery"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "QueryFycLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:FilterLogEvents",
+        "logs:StartQuery"
+      ],
+      "Resource": [
+        "arn:aws:logs:us-east-1:*:log-group:fyc-*",
+        "arn:aws:logs:us-east-1:*:log-group:aws-waf-logs-fyc-*"
+      ]
+    },
+    {
+      "Sid": "CallerIdentity",
+      "Effect": "Allow",
+      "Action": "sts:GetCallerIdentity",
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+### Create the read-only group, user, and profile
+
+1. Create a group named `amazon-fyc-readonly` and attach the policy to it.
+2. Create a user named `amazon-fyc-readonly` with no console password, in that group.
+3. Create one CLI access key and store it with the non-echoing form above, under the profile
+   `amazon-fyc-readonly`.
+
+Verify with read-only calls:
+
+```bash
+aws sts get-caller-identity --profile amazon-fyc-readonly
+aws lightsail get-relational-database-metric-data --profile amazon-fyc-readonly --region us-west-2 \
+  --relational-database-name <database-name> --metric-name CPUUtilization --period 3600 \
+  --start-time "$(date -u -d '-1 day' +%FT%TZ)" --end-time "$(date -u +%FT%TZ)" \
+  --unit Percent --statistics Average Maximum
+```
