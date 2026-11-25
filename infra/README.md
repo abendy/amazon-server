@@ -748,6 +748,7 @@ loudly when it is missing. Each row names the step that recreates it and what
 | Origin TLS certificates | provisioner-owned certificate paths | when HTTPS-only origin is chosen | Step 3 | No |
 | Embed password | `/etc/nginx/.htpasswd` | staging | Step 4 | Empty warns, non-empty passes |
 | Reminder ping URL | `/etc/amazon-server.reminder-ping-url` | production | [`docs/HEALTHCHECKS.md`](../docs/HEALTHCHECKS.md) | Owner, mode, empty; else warns |
+| Origin lockdown secrets | `/etc/amazon-server.origin-auth` (root, 600) | both | "Origin lockdown": the secret is also in each CloudFront distribution's origin settings | Owner, mode, count, enforced; missing warns |
 | IPv4 TCP mitigation (CVE-2026-98432) | `/etc/sysctl.d/99-no-mptcp.conf`, `/etc/nftables.d/cve-2026-98432.nft`, `/etc/systemd/system/cve-2026-98432.service` | both | `_docs` `platform/plans/archive/20261102-cve-2026-98432-tcp-mitigation/rollout.md` and its script | No; use the rollout's verify list |
 
 Two rules keep this table complete:
@@ -783,6 +784,40 @@ scripts/update-cloudfront-ranges.py
 ```
 
 Commit the refreshed file, then converge staging and production.
+
+## Origin lockdown
+
+The sites are meant to be reached only through CloudFront, where the WAF runs. The origin
+hostnames (`origin.` and `origin.stg.`) and the static IPs answer anyone, so each CloudFront
+distribution sends a secret `X-Origin-Auth` header to the origin, and nginx refuses any request
+without it.
+
+- **Secrets:** `/etc/amazon-server.origin-auth`, root 600, one secret per line: 32 to 40 letters
+  and digits (a longer key overflows nginx's map hash and nginx won't start). `#` comments are
+  allowed. Never in Git, chat or logs.
+- **Converge** renders `/etc/nginx/includes/origin-auth.conf` (root 600) from that file
+  (`infra/origin-auth.sh`). `includes/security.conf` then returns 403 to any request without a
+  listed secret. Loopback still passes, keyed on the connecting address, so `smoke-all.sh` works
+  and a forged `X-Forwarded-For` doesn't. Without the file, the repo's include refuses nothing:
+  the local stack and an unconfigured host serve as before.
+- **Status:** the `origin auth` line under manual checks gives the file's owner, mode, secret
+  count, and whether nginx enforces it. It never prints a secret.
+
+**Turn it on** (per environment, staging first). The header goes on before nginx checks it, so no
+viewer ever sees a 403:
+
+1. On the host: `sudo sh -c 'umask 077; LC_ALL=C tr -dc A-Za-z0-9 < /dev/urandom | head -c 40 > /etc/amazon-server.origin-auth.pending'`.
+2. Add it as the origin custom header `X-Origin-Auth` on each of the environment's CloudFront
+   distributions, read straight from that file. Wait for Deployed.
+3. `sudo mv /etc/amazon-server.origin-auth.pending /etc/amazon-server.origin-auth`, then
+   `sudo amazon-server-converge` and `status`.
+4. Check: a request straight to the origin hostname gets 403; every site through CloudFront
+   still answers as before.
+
+**Rotate:** add the new secret as a second line and converge, switch the distributions' header to
+it and wait for Deployed, then delete the old line and converge again.
+
+**Turn it off:** delete the file and converge. The header on the distributions does no harm.
 
 ## Blocked agents and viewers
 

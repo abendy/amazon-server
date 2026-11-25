@@ -37,6 +37,8 @@ declare \
 source "$(dirname "$SCRIPT_SOURCE")/php-sites.sh"
 # shellcheck source=infra/mysql-local.sh
 source "$(dirname "$SCRIPT_SOURCE")/mysql-local.sh"
+# shellcheck source=infra/origin-auth.sh
+source "$(dirname "$SCRIPT_SOURCE")/origin-auth.sh"
 
 # ENV-DELTAS.md: Site and environment values / staging. These are the only
 # environment-specific values rendered into the installed serving tree.
@@ -942,6 +944,7 @@ write_applied_state() {
 render_base_config
 write_logrotate
 render_rsvp_static_include
+origin_auth_render "$ORIGIN_AUTH_FILE" "$NGINX_ROOT/includes/origin-auth.conf"
 write_templates
 
 STAGING_TLS_READY=false

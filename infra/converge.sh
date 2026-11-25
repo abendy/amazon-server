@@ -28,6 +28,8 @@ AMPAS_ROOT='/var/www/html/amazon-studios-ampas'
 GUILDS_ROOT='/var/www/html/amazon-studios-guilds'
 RSVP_ROOT='/var/www/html/rsvp'
 REMINDER_PING_URL_FILE='/etc/amazon-server.reminder-ping-url'
+ORIGIN_AUTH_FILE='/etc/amazon-server.origin-auth'
+ORIGIN_AUTH_INCLUDE='/etc/nginx/includes/origin-auth.conf'
 WP_ENV_KEYS=(
   DB_NAME DB_USER DB_PASSWORD DB_HOST
   WP_ENV WP_HOME WP_SITEURL
@@ -195,6 +197,28 @@ check_reminder_ping() {
   fi
 }
 
+# check_origin_auth: the secrets file that turns on the origin lockdown
+# (infra/README.md, "Origin lockdown"). Without a secret the origin serves
+# requests that skip CloudFront and its WAF, so that warns. Never prints a secret.
+check_origin_auth() {
+  local file="$ORIGIN_AUTH_FILE" facts count
+  if [[ ! -f "$file" ]]; then
+    manual_result WARN 'origin auth' "${file} missing: the origin serves requests that skip CloudFront"
+    return
+  fi
+  facts="$(file_facts "$file")"
+  count="$(sed 's/#.*//' "$file" | grep -cE '^[[:space:]]*[A-Za-z0-9]{32,40}[[:space:]]*$' || true)"
+  if [[ "$(stat -c '%U:%G %a' "$file")" != 'root:root 600' ]]; then
+    manual_result WARN 'origin auth' "${file} ${facts}; should be root:root 600"
+  elif [[ "$count" -eq 0 ]]; then
+    manual_result WARN 'origin auth' "${file} ${facts}, no secret: the origin serves requests that skip CloudFront"
+  elif ! grep -q 'origin_auth_header' "$ORIGIN_AUTH_INCLUDE" 2> /dev/null; then
+    manual_result WARN 'origin auth' "${file} ${facts}, ${count} secret(s) not enforced yet: converge"
+  else
+    manual_result ok 'origin auth' "${file} ${facts}, ${count} secret(s), enforced"
+  fi
+}
+
 # origin_ssh_host <repo>: the SSH host (an ~/.ssh/config alias) in the
 # checkout's origin URL, or nothing when the origin is not an SSH remote.
 origin_ssh_host() {
@@ -324,6 +348,7 @@ run_manual_checks() {
   done
   check_auth_file "$environment"
   check_reminder_ping "$environment"
+  check_origin_auth
   check_ssh_aliases
   check_checkout_owners
 }
