@@ -4,8 +4,8 @@
     update-cloudfront-ranges.py [--check]
 
 Reads AWS's published ranges and writes every CLOUDFRONT_ORIGIN_FACING prefix to
-nginx/includes/cloudfront-real-ip.conf. Those are the addresses CloudFront, and so each
-Lightsail distribution, uses to reach an origin. A request from any other address keeps its
+nginx/includes/cloudfront-real-ip.conf. Those are the addresses every CloudFront distribution
+uses to reach an origin. A request from any other address keeps its
 own address, whatever X-Forwarded-For it sends.
 
 --check writes nothing and exits 1 when the committed list differs from AWS's current one.

@@ -2,8 +2,10 @@
 
 This root module describes the co-located Ubuntu 24.04 Lightsail instances for RSVP,
 AMPAS, and Guilds. Terraform owns the instance, static IPv4 address, attachment, and public ports.
-Existing Lightsail CDN distributions, their domains and certificates, and the managed databases are
-driver-owned and stay outside Terraform.
+The CloudFront distributions in front of the sites (with their certificates, web ACLs and logs),
+the site and `origin.` DNS records, and the managed databases are driver-owned and stay outside
+Terraform. The distributions' setup and history are in `_docs`
+`platform/plans/20261123-cloudfront-pro-move/`.
 
 **Naming note:** "staging" in the surrounding names — the AWS profile and IAM policy/group
 labels, the `amazon-staging-provision` script, the `STAGING_` variable prefix, the
@@ -47,7 +49,7 @@ normalizing them is tracked in the docs repo.
 - An existing Lightsail key pair in the selected region. Terraform cannot create the key pair.
 - The region's valid availability zone, Ubuntu 24.04 blueprint ID (`ubuntu_24_04`), and
   driver-selected bundle ID.
-- Access to the existing CDN distributions and the provisioner-owned site releases and application
+- Access to the CloudFront distributions, the `origin.` DNS records, and the provisioner-owned site releases and application
   database settings. This packet does not create databases or import dumps into them.
 
 Terraform uses local state on the driver's mini. State and plan files are ignored by Git because
@@ -80,7 +82,7 @@ terraform output -raw static_ip
 
 Set every value in `terraform.tfvars`. Keep the file on the driver's machine. `region` and
 `bundle_id` have no defaults because they choose the billable location and instance size. The
-`static_ip` output is the origin address used for direct checks and the later CDN origin flip.
+`static_ip` output is the origin address used for direct checks and the later origin switch.
 
 ## Production instance
 
@@ -110,7 +112,7 @@ workspaces set `auto_snapshot_time = "11:00"` (6 AM Eastern in winter, 7 AM in s
 instance takes daily automatic snapshots, and a plan without that value would turn them off. Run plans from this directory: the workspaces and their state
 live here, and `terraform workspace new` elsewhere starts an empty one. Every post-apply manual step below applies unchanged; the
 production Guilds host binding has no deployed reference and needs an explicit driver
-ratification before any CDN origin flip.
+ratification before any origin switch.
 
 ## Instance access
 
@@ -390,7 +392,7 @@ create-instances-from-snapshot`) and move the static IP to it.
 
 ## Post-apply manual steps
 
-Complete these steps on the new instance before changing a CDN origin. Re-run the provisioner at
+Complete these steps on the new instance before switching the origin to it. Re-run the provisioner at
 any time with `sudo amazon-server-converge` ("Converge and status"); it re-renders the installed
 nginx tree and ends with its own `nginx -t` gate.
 
@@ -570,9 +572,9 @@ certificates, htpasswd hashes, or credentials in this repository.
 
 ### 3. Configure optional origin TLS
 
-By default, the existing CDN distributions terminate TLS and the new instance serves HTTP as their
-origin. Do not change DNS and do not run certbot for that setup. The domains and certificates stay
-attached to the distributions.
+By default, the CloudFront distributions terminate TLS and the new instance serves HTTP as their
+origin. Do not change the site DNS and do not run certbot for that setup. The domains and
+certificates stay on the distributions.
 
 If the driver deliberately chooses an HTTPS-only origin policy, obtain origin certificates with the
 driver's approved certbot/ACME method. Public DNS must remain pointed at the distributions. Put the
@@ -680,46 +682,27 @@ each run from `/etc/amazon-server.reminder-ping-url`, which lives only on the in
 it the job runs as before and pings nothing. Setup, proof, and the alert test are in
 [`docs/HEALTHCHECKS.md`](../docs/HEALTHCHECKS.md).
 
-### 6. Flip the existing CDN origins
+### 6. Switch the origin to the new instance
 
-Cutover is an origin change on the existing distributions, not a DNS change:
+The CloudFront distributions reach the origin by hostname: production through
+`origin.amazonmgmstudiosawards.com`, staging through `origin.stg.amazonmgmstudiosawards.com`. Each
+is an A record (TTL 300) to the instance's static IP. Cutover is that one DNS change; the
+distributions and the site names stay as they are.
 
-1. Record each distribution's current origin for rollback.
-2. Set each distribution's origin to the new instance's `static_ip` output using the driver's
-   existing Lightsail distribution workflow.
-3. Keep the distribution domains and certificates unchanged, and wait for the distribution to
-   finish propagating.
-4. Run the public serving matrix below through the distribution hostnames.
+1. Run the direct-origin matrix ("Staging verification") against the new `static_ip`, before the
+   instance has an origin lockdown secrets file.
+2. Copy `/etc/amazon-server.origin-auth` from the old instance (root, 600) and converge
+   ("Origin lockdown"). A direct request now gets 403.
+3. Record the `origin.` record's current value, then point it at the new `static_ip`.
+4. After the old TTL (5 minutes), run the matrix through the site names.
 
-Rollback is the same operation in reverse: restore each recorded old origin. Terraform does not
-manage or modify any distribution.
+Rollback is restoring the recorded A record value. Terraform does not manage the record or any
+distribution.
 
-### New distributions, certificates, and DNS (production cutover, 2026-09-01)
-
-When cutting over with fresh distributions instead of an origin flip, the certificate dance has
-sharp edges — all learned the hard way:
-
-1. **A domain attaches to one distribution at a time**, and the claim lives with the
-   distribution's **attached certificate**, not its custom-domain toggles. "Already associated
-   with a different resource" means an old distribution still holds an attached cert carrying
-   that SAN — detach the cert there (or delete the distribution) to release it. An attached
-   cert also cannot be deleted.
-2. **Distribution certificates are Lightsail-created, us-east-1 only.** CLI checks and
-   attaches need `--region us-east-1` explicitly; without it the cert "does not exist".
-   The console's "Attach certificate" picker lags several minutes behind reality — the CLI
-   attach by exact `certificateName` is authoritative:
-   `aws lightsail attach-certificate-to-distribution --region us-east-1 --distribution-name <d> --certificate-name <c>`.
-3. **Match the SAN list to the provisioner's server names** before attaching — a cert carrying
-   legacy-domain SANs routes those hosts to whatever server block is default. The five
-   production names are the ENV-DELTAS rows.
-4. **Recreate under a new name** if a cert was just deleted — a reused name can hit ghost
-   state.
-5. **The distribution caches what it sees at attach time.** After flipping site state (for
-   example the coming-soon toggle), reset the distribution cache or visitors keep the old
-   pages.
-
-DNS records point at the distribution domains and stay outside Terraform; record the previous
-values before switching, and rollback is restoring them.
+Moving the site names themselves between distributions (as in the 2026-11-25 move from the
+Lightsail CDN to CloudFront) is a different job: its scripts, order and lessons are in `_docs`
+`platform/plans/20261123-cloudfront-pro-move/`. The site names are Route 53 alias records to the
+distributions and stay outside Terraform.
 
 ## Host state outside Git
 
@@ -768,8 +751,8 @@ systemctl list-timers --all
 ## CloudFront address list
 
 The RSVP, AMPAS and Guilds server blocks take the client address from `X-Forwarded-For` only
-when one of CloudFront's origin-facing addresses made the connection. Every Lightsail distribution reaches
-the origin from those addresses. Any other caller, including a direct-origin check, keeps its own
+when one of CloudFront's origin-facing addresses made the connection. Every CloudFront
+distribution reaches the origin from those addresses. Any other caller, including a direct-origin check, keeps its own
 address, and a forged header changes nothing. The booking throttle and the API's booking checks
 both key on that address.
 
@@ -837,11 +820,12 @@ the page and its files from loading.
 
 Run the ratified must-serve matrix in
 [`restructure-serving-surface.md`](../../_docs/rsvp/reference/restructure-serving-surface.md) against the static IP before
-and after the origin flip. Compare against the **current landed local matrix capture** (the latest
+and after the origin switch. Compare against the **current landed local matrix capture** (the latest
 `_artifacts/RS-*` final matrix), never a historical one — the hosted/direct page family 404s by
 driver ruling 7 (2026-08-12), and API validation rules move with the code, so older baselines
 report false failures. Use `--resolve` for direct-origin checks so the Host header remains the
-staging name. The default origin policy uses port 80:
+staging name. The default origin policy uses port 80. Once the origin lockdown is on, a direct
+check gets 403: run these before the secrets file is in place, or on the instance over loopback.
 
 ```bash
 staging_ip="$(terraform output -raw static_ip)"
@@ -862,8 +846,8 @@ curl --resolve "stg.rsvp.amazonmgmstudiosawards.com:80:$staging_ip" \
 ```
 
 If the driver selected HTTPS-only origin TLS, use port 443 and `https://` for the direct-origin
-checks after the certificate-ready re-render. After the CDN origin flip, repeat the same matrix
-through the normal distribution hostnames. Check status and response headers, not only bodies.
+checks after the certificate-ready re-render. After the origin switch, repeat the same matrix
+through the site names. Check status and response headers, not only bodies.
 
 The live matrix, PHP-FPM startup, managed-database application login, certificate behavior, CDN
 propagation, and browser smoke are driver checks after apply. Do not submit RSVPs or exercise any
@@ -872,7 +856,7 @@ email-sending path during this packet.
 ## Teardown
 
 After an explicit driver decision, audit the instance against "Host state outside Git" and
-restore the recorded CDN origins first, then run:
+point the `origin.` record back at the instance that stays first, then run:
 
 ```bash
 terraform destroy

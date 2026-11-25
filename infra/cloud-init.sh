@@ -137,7 +137,7 @@ if [[ "$AMAZON_SERVER_ENVIRONMENT" == 'production' ]]; then
 
   # ENV-DELTAS.md records no deployed production Guilds host binding (the
   # deployed reference is a coming-soon placeholder block). DRIVER RATIFY
-  # before any CDN origin flip.
+  # before any origin switch.
   STAGING_GUILDS_SERVER_NAME='amazonmgmstudiosguilds.com www.amazonmgmstudiosguilds.com'
 
   STAGING_RSVP_TLS_CERT='/etc/letsencrypt/live/rsvp.amazonmgmstudiosawards.com/fullchain.pem'
