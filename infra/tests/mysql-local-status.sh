@@ -22,7 +22,7 @@ source "${INFRA_DIR}/converge.sh"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 cp "${REPO_DIR}/mysql/server-parity.cnf" "${WORK_DIR}/parity.cnf"
-cp "${REPO_DIR}/mysql/staging-local.cnf" "${WORK_DIR}/staging.cnf"
+cp "${REPO_DIR}/infra/mysql/staging-local.cnf" "${WORK_DIR}/staging.cnf"
 MYSQL_PARITY_CONF="${WORK_DIR}/parity.cnf"
 MYSQL_LOCAL_CONF="${WORK_DIR}/staging.cnf"
 

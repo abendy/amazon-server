@@ -217,8 +217,9 @@ converge skips it and keeps its managed databases.
   when MySQL and PHP-FPM peak together.
 - `/etc/mysql/mysql.conf.d/zz-amazon-parity.cnf` is `mysql/server-parity.cnf` as is: the
   managed servers' `sql_mode`, character set, collation, time zone and limits.
-- `/etc/mysql/mysql.conf.d/zz-amazon-staging.cnf` is `mysql/staging-local.cnf`: listeners on
-  `127.0.0.1` only and a 256 MB buffer pool.
+- `/etc/mysql/mysql.conf.d/zz-amazon-staging.cnf` is `infra/mysql/staging-local.cnf`: listeners
+  on `127.0.0.1` only and a 256 MB buffer pool. It stays out of `mysql/` because the local Docker
+  stacks mount that folder as their MySQL config: only settings shared with them belong there.
 - The config goes in before the packages, so a first install starts on it. A later config
   change restarts MySQL; an unchanged one leaves it running.
 - The named time zone tables load from the host's tzdata, and reload when the `tzdata` package

@@ -5,7 +5,7 @@
 #
 # The server loads mysql/server-parity.cnf as is, so staging keeps the managed
 # servers' sql_mode, character set, collation and time zone, then
-# mysql/staging-local.cnf for what differs on a shared host: local-only
+# infra/mysql/staging-local.cnf for what differs on a shared host: local-only
 # listeners and a small buffer pool. infra/converge.sh status reads both
 # installed files back and compares them with the running server.
 
@@ -65,7 +65,7 @@ mysql_local_converge() {
   before="$({ cat "$MYSQL_PARITY_CONF" "$MYSQL_LOCAL_CONF" 2> /dev/null || true; } | sha256sum)"
   install -d -o root -g root -m 0755 "$MYSQL_CONF_DIR"
   install -o root -g root -m 0644 "${AMAZON_SERVER_ROOT}/mysql/server-parity.cnf" "$MYSQL_PARITY_CONF"
-  install -o root -g root -m 0644 "${AMAZON_SERVER_ROOT}/mysql/staging-local.cnf" "$MYSQL_LOCAL_CONF"
+  install -o root -g root -m 0644 "${AMAZON_SERVER_ROOT}/infra/mysql/staging-local.cnf" "$MYSQL_LOCAL_CONF"
   own_file "$MYSQL_PARITY_CONF" "$MYSQL_LOCAL_CONF"
   after="$(cat "$MYSQL_PARITY_CONF" "$MYSQL_LOCAL_CONF" | sha256sum)"
 
