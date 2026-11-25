@@ -5,7 +5,7 @@ AMPAS, and Guilds. Terraform owns the instance, static IPv4 address, attachment,
 The CloudFront distributions in front of the sites (with their certificates, web ACLs and logs),
 the site and `origin.` DNS records, and the managed databases are driver-owned and stay outside
 Terraform. The distributions' setup and history are in `_docs`
-`platform/plans/20261123-cloudfront-pro-move/`.
+`platform/plans/archive/20261123-cloudfront-pro-move/`.
 
 **Naming note:** "staging" in the surrounding names — the AWS profile and IAM policy/group
 labels, the `amazon-staging-provision` script, the `STAGING_` variable prefix, the
@@ -701,7 +701,7 @@ distribution.
 
 Moving the site names themselves between distributions (as in the 2026-11-25 move from the
 Lightsail CDN to CloudFront) is a different job: its scripts, order and lessons are in `_docs`
-`platform/plans/20261123-cloudfront-pro-move/`. The site names are Route 53 alias records to the
+`platform/plans/archive/20261123-cloudfront-pro-move/`. The site names are Route 53 alias records to the
 distributions and stay outside Terraform.
 
 ## Host state outside Git
