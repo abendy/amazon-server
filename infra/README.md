@@ -230,6 +230,40 @@ Status adds a `local db` group on staging. It checks that MySQL runs, that nothi
 3306 or 33060 beyond `127.0.0.1`, that every `[mysqld]` value in both installed files matches
 the running server, that a named zone converts, and that the swap file is active. Root reads the values over the socket.
 
+**Encode review tool.** On staging only, `infra/encode-review.sh` installs **Media → Optimize
+video**, the trailer encode and review tool ([`encode-review/README.md`](../encode-review/README.md)).
+Production converge installs and renders nothing for it.
+
+- `ffmpeg` from Ubuntu, and Netflix's `vmaf` tool at `/opt/encode-review/bin/vmaf`: the pinned
+  upstream release, SHA-256 checked, because Ubuntu's `ffmpeg` has no `libvmaf`. It downloads
+  only when the installed copy is missing or from another archive.
+- The `encode-review` system user. `www-data` joins its group, so PHP-FPM can write uploads into
+  the spool; converge reloads the AMPAS and Guilds PHP-FPM units the one time it adds the group.
+- The spool `/srv/encode-review/` and its folders, `encode-review:encode-review`, mode 2775.
+- `/etc/systemd/system/encode-review-worker.service` with its limits (`MemoryMax=800M`,
+  `MemorySwapMax=0`, `CPUQuota=150%`, `Nice=19`, `IOSchedulingClass=idle`). Converge restarts
+  it exactly when what it loads at start changes: the unit or a drop-in, the worker code in the
+  checkout, or the login file's contents. It records the digest the worker started with in
+  `/var/lib/encode-review/worker-state` (root-only); an unchanged converge leaves a running
+  encode alone.
+- `/etc/needrestart/conf.d/encode-review.conf`, so needrestart (run by unattended upgrades)
+  never restarts the worker after a library update and cuts off a running encode. The worker
+  picks up new libraries at its next restart (converge, or a reboot).
+- When `/root/amazon-staging/encode-review-production.env` exists, a drop-in passes it to the
+  worker with `LoadCredential=` (the production upload login, a driver step).
+- No upload pool: uploads arrive in 64 MiB parts through each site's own pool and limits.
+  Converge removes the `<site>-encode-review-upload` pools an earlier build installed and reloads
+  that PHP-FPM; status counts any left as pools left behind.
+- The must-use plugin in each WordPress site's `web/app/mu-plugins/encode-review/`, which both
+  site repositories ignore. It belongs to `ubuntu`, like the rest of the checkout.
+- `/etc/nginx/snippets/encode-review.conf` (an `internal` location onto the spool, for playback)
+  and its include in the staging AMPAS and Guilds server blocks (`docs/ENV-DELTAS.md`).
+
+Status adds an `encode review` group on staging: the service, whether it runs what converge last
+started it with, the unit's limits, the spool's owner and mode with `www-data` in the group,
+`ffmpeg` and `vmaf`, the plugin matching the checkout in both sites, free disk (under 10 GiB warns: uploads are refused), and the production
+login (absent warns: Send to production is off).
+
 **PHP per site.** `infra/cloud-init.sh` sets `RSVP_PHP_VERSION`, `AMPAS_PHP_VERSION`,
 `GUILDS_PHP_VERSION` and `PHP_CLI_VERSION`. `infra/php-sites.sh` derives the rest from them:
 
@@ -721,6 +755,9 @@ loudly when it is missing. Each row names the step that recreates it and what
 | Converge ref | `/etc/amazon-server.ref` | both | Bootstrap; edited for a pre-land test build (ground rule 3) | Prints it |
 | Managed-database handoff | `/root/amazon-staging/db.env` | production (staging has no managed databases since 2026-11-20) | Step 1 | Owner, mode, key names; absent only warns |
 | Local database data and logins | MySQL schemas `ampas`, `guilds`, `rsvp` and their users; passwords in `/root/amazon-staging/local-db.env` (root, 600) | staging | `_docs` `platform/plans/archive/20261120-staging-db-on-instance/` (copy script), or `scripts/sync-data.py` from production | The server only (`local db` group), not the data |
+| Encode review spool | `/srv/encode-review/`: originals, attempts, and one send record per attachment sent to production | staging | Not recreated: jobs expire 7 days after their last activity, approved files are in Media. A finished send is also on the staging attachment (`_encode_review_send`), which still blocks a second send | Folders, owner and mode (`encode review` group), not the jobs |
+| Encode review production login | `/root/amazon-staging/encode-review-production.env` (root, 600) | staging | [`encode-review/README.md`](../encode-review/README.md), "Send to production: driver steps" | Present, else warns |
+| Production upload-only role and user | `upload_only` role, its user and application password, in each production WordPress database | production | [`encode-review/README.md`](../encode-review/README.md), "Send to production: driver steps" | No |
 | Database move dumps and login backups | `/root/amazon-staging/db-move/` | staging | Not recreated: a record of the 2026-11-20 move | No |
 | Deploy keys and SSH aliases | `~ubuntu/.ssh/` | both | Step 2 | Each site's alias; not the keys |
 | Site releases | `/var/www/html/{rsvp,amazon-studios-ampas,amazon-studios-guilds}` | both | Step 2 | No |

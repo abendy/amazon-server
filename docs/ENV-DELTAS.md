@@ -35,7 +35,8 @@ its disk with debug-level nginx error logs.
 Upload limits are the same on every provisioned instance: PHP-FPM pools `upload_max_filesize`
 and `post_max_size` 512M, `max_execution_time` and `max_input_time` 600s; nginx
 `client_max_body_size` 600m, `client_body_timeout` 300s, `fastcgi_read_timeout` 600s for
-WordPress. Trailers upload through WP Media, so these must hold on every re-provision.
+WordPress. Trailers upload through WP Media, so these must hold on every re-provision. The
+encode review tool (staging only) fits them: it sends originals of up to 5 GiB in 64 MiB parts.
 
 ## Scheduled jobs
 
@@ -258,6 +259,7 @@ must-serve matrix cannot observe, or values that R4 must ratify before provision
 |---|---|---|---|
 | RSVP | staging | Content-Security-Policy host allowlist | Provisioner-owned: `infra/csp/staging.conf`, installed as `/etc/nginx/snippets/rsvp-staging-csp.conf` on every converge. The local harness intentionally emits no CSP. |
 | RSVP | production | Content-Security-Policy host allowlist | Provisioner-owned: `infra/csp/production.conf`, installed as `/etc/nginx/snippets/rsvp-staging-csp.conf` on every converge. The local harness intentionally emits no CSP. |
+| AMPAS, Guilds | staging | Encode review: `include snippets/encode-review.conf;` after the CloudFront include. The snippet holds playback only: an `internal` location `/_encode-review/` aliased to `/srv/encode-review/`. | Provisioner-owned: `encode-review/nginx/encode-review.conf`, installed by `infra/encode-review.sh`. WordPress answers playback requests with `X-Accel-Redirect` after its login check. Uploads need no delta: they arrive in 64 MiB parts through `admin-post.php` inside the site limits above (PF-02 ruling 14). Local and production render nothing for it; the local tool harness adds the include by hand. |
 
 The CSP values are environment-specific security policy, not byte-shared serving rules. Change
 them in `infra/csp/` and converge, never on the instance ([`infra/README.md`](../infra/README.md),

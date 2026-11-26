@@ -1,0 +1,91 @@
+/* Encode review admin page. Uses WordPress admin colours and spacing. */
+.encode-review .er-intro { max-width: 60em; font-size: 14px; }
+.encode-review .er-worker { color: #50575e; }
+.encode-review .er-card {
+  background: #fff;
+  border: 1px solid #c3c4c7;
+  border-radius: 4px;
+  padding: 4px 16px 12px;
+  margin: 16px 0;
+  max-width: 1400px;
+}
+.encode-review .er-upload input[type=file] { margin-right: 8px; }
+.encode-review .er-progress { width: 320px; margin-top: 8px; }
+.encode-review .er-stage-work { color: #2271b1; font-weight: 600; }
+.encode-review .er-stage-failed { color: #b32d2e; font-weight: 600; }
+.encode-review .er-stage-done { color: #00a32a; font-weight: 600; }
+.encode-review .er-meta { color: #50575e; margin-top: -4px; }
+.encode-review .er-wait progress { width: 100%; max-width: 480px; }
+
+.encode-review .er-pick label { margin-right: 12px; }
+.encode-review .er-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 8px;
+}
+.encode-review .er-toolbar input[type=range] { flex: 1 1 240px; }
+.encode-review .er-time { font-variant-numeric: tabular-nums; min-width: 3em; }
+
+.encode-review .er-stage-videos {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  background: #000;
+  padding: 4px;
+}
+.encode-review .er-stage-videos.er-swapped .er-side[data-er-side="a"] { order: 2; }
+.encode-review .er-side { margin: 0; position: relative; }
+.encode-review .er-side video { width: 100%; height: auto; display: block; }
+.encode-review .er-side figcaption {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+/* Wipe: both videos in one cell, the second clipped from the left. */
+.encode-review .er-stage-videos.er-wiping { grid-template-columns: 1fr; }
+.encode-review .er-stage-videos.er-wiping .er-side { grid-area: 1 / 1; }
+.encode-review .er-stage-videos.er-wiping .er-side:last-of-type figcaption { left: auto; right: 6px; }
+.encode-review .er-stage-videos.er-wiping.er-swapped .er-side[data-er-side="a"] figcaption { left: auto; right: 6px; }
+.encode-review .er-stage-videos.er-wiping.er-swapped .er-side[data-er-side="b"] figcaption { left: 6px; right: auto; }
+.encode-review .er-wipe-handle {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 8px;
+  width: calc(100% - 8px);
+  z-index: 2;
+}
+.encode-review .er-unplayable { color: #b32d2e; }
+
+.encode-review .er-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 24px;
+}
+.encode-review .er-worst li { margin-bottom: 6px; }
+.encode-review .er-numbers th { text-align: left; padding: 3px 16px 3px 0; font-weight: 600; white-space: nowrap; }
+.encode-review .er-numbers td { padding: 3px 0; }
+
+.encode-review .er-advice {
+  border-left: 4px solid #dba617;
+  background: #fcf9e8;
+  padding: 4px 12px;
+  margin: 16px 0;
+}
+.encode-review .er-advice-ok { border-left-color: #00a32a; background: #edfaef; }
+.encode-review .er-advice ul { margin: 0 0 8px 1em; }
+
+.encode-review .er-still { margin: 12px 0; }
+.encode-review .er-still-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.encode-review .er-still-pair img { width: 100%; height: auto; display: block; }
+.encode-review .er-sent { color: #00a32a; font-weight: 600; }
+.encode-review .er-remove { margin-top: 24px; }
+.encode-review .er-attempts { max-width: 1400px; }

@@ -405,8 +405,8 @@ check_php_site() {
 check_php_version() {
   local dir="$1" version unit state site pool want_active=false
   local pools='' stale=''
-  version="${dir#/etc/php/}"
-  version="${version%/fpm/pool.d}"
+  version="${dir%/fpm/pool.d}"
+  version="${version##*/}"
   unit="php${version}-fpm"
   for site in "${PHP_SITES[@]}"; do
     if [[ "${PHP_SETTING[${site}_version]:-}" == "$version" ]]; then
@@ -941,6 +941,188 @@ run_db_checks() {
   check_swap
 }
 
+# ---- encode review --------------------------------------------------------
+
+# What infra/encode-review.sh installs on staging: the worker unit and its
+# limits, the spool, ffmpeg and the vmaf tool, and the must-use plugin in each
+# WordPress site. The unit file itself is an owned file in the manifest.
+ER_UNIT='encode-review-worker.service'
+ER_USER='encode-review'
+ER_SPOOL='/srv/encode-review'
+ER_SPOOL_DIRS=(incoming queue work 'done' failed sends)
+ER_VMAF_BIN='/opt/encode-review/bin/vmaf'
+ER_PLUGIN_SOURCE="${AMAZON_SERVER_ROOT}/encode-review/wp-plugin/encode-review"
+ER_PLUGIN_SITES=("$AMPAS_ROOT" "$GUILDS_ROOT")
+ER_PLUGIN_SUBDIR='web/app/mu-plugins/encode-review'
+ER_CREDENTIAL_FILE='/root/amazon-staging/encode-review-production.env'
+ER_UNIT_FILE="/etc/systemd/system/${ER_UNIT}"
+ER_DROPIN_DIR="/etc/systemd/system/${ER_UNIT}.d"
+ER_STATE_FILE='/var/lib/encode-review/worker-state'
+ER_INSTALLER="${AMAZON_SERVER_ROOT}/infra/encode-review.sh"
+# The unit's limits as systemctl show prints them. IOSchedulingClass prints
+# as a number (3) on some systemd versions and a name on others.
+ER_LIMITS=(
+  'MemoryMax=838860800'
+  'MemorySwapMax=0'
+  'CPUQuotaPerSecUSec=1.500000s'
+  'Nice=19'
+  'IOSchedulingClass=idle|3'
+)
+ER_DISK_FLOOR_BYTES=$((10 * 1024 * 1024 * 1024))
+
+ER_LINES=()
+ER_PROBLEMS=()
+ER_WARNED=0
+
+# er_result <ok|WARN|FAIL|skip> <label> <detail>; FAIL is drift, WARN is not.
+er_result() {
+  ER_LINES+=("$(printf '  %-4s  %-16s %s' "$1" "$2" "$3")")
+  case "$1" in
+    FAIL) ER_PROBLEMS+=("encode review ${2}: ${3}") ;;
+    WARN) ER_WARNED=$((ER_WARNED + 1)) ;;
+  esac
+}
+
+check_er_service() {
+  if systemctl is-active --quiet "$ER_UNIT"; then
+    er_result ok service "${ER_UNIT} active"
+  else
+    er_result FAIL service "${ER_UNIT} not running"
+  fi
+}
+
+# The worker loads its code, unit and login only when it starts. Converge
+# records the digest of what it started with; a different digest now means it
+# runs something older (infra/encode-review.sh, encode_review_state_hash).
+check_er_current() {
+  local er_recorded er_expected
+  er_recorded="$(cat "$ER_STATE_FILE" 2> /dev/null || true)"
+  er_expected="$( # shellcheck source=infra/encode-review.sh
+    source "$ER_INSTALLER" && encode_review_state_hash "$AMAZON_SERVER_ROOT" \
+      "$ER_UNIT_FILE" "$ER_DROPIN_DIR" "$ER_CREDENTIAL_FILE" 2> /dev/null || true)"
+  if [[ -z "$er_recorded" ]]; then
+    er_result FAIL current "${ER_STATE_FILE} missing: converge has not started the worker"
+  elif [[ "$er_recorded" != "$er_expected" ]]; then
+    er_result FAIL current 'worker started with older code, unit or login: converge restarts it'
+  else
+    er_result ok current 'worker started with the checked-out code, unit and login'
+  fi
+}
+
+check_er_limits() {
+  local shown want key got
+  local -a off=()
+  shown="$(systemctl show "$ER_UNIT" --property=MemoryMax,MemorySwapMax,CPUQuotaPerSecUSec,Nice,IOSchedulingClass 2> /dev/null || true)"
+  for want in "${ER_LIMITS[@]}"; do
+    key="${want%%=*}"
+    got="$(awk -F= -v k="$key" '$1 == k { print substr($0, length(k) + 2) }' <<< "$shown")"
+    if [[ ! "$got" =~ ^(${want#*=})$ ]]; then
+      off+=("${key} is ${got:-unset}, want ${want#*=}")
+    fi
+  done
+  if [[ ${#off[@]} -gt 0 ]]; then
+    local joined
+    joined="$(printf '%s; ' "${off[@]}")"
+    er_result FAIL limits "${joined%; }"
+  else
+    er_result ok limits 'MemoryMax=800M MemorySwapMax=0 CPUQuota=150% Nice=19 IOSchedulingClass=idle'
+  fi
+}
+
+check_er_spool() {
+  local dir facts
+  local -a off=()
+  for dir in "$ER_SPOOL" "${ER_SPOOL_DIRS[@]/#/${ER_SPOOL}/}"; do
+    if [[ ! -d "$dir" ]]; then
+      off+=("${dir} missing")
+      continue
+    fi
+    facts="$(stat -c '%U:%G %a' "$dir")"
+    if [[ "$facts" != "${ER_USER}:${ER_USER} 2775" ]]; then
+      off+=("${dir} is ${facts}, want ${ER_USER}:${ER_USER} 2775")
+    fi
+  done
+  if ! id -nG www-data 2> /dev/null | tr ' ' '\n' | grep -qxF "$ER_USER"; then
+    off+=("www-data is not in the ${ER_USER} group")
+  fi
+  if [[ ${#off[@]} -gt 0 ]]; then
+    local joined
+    joined="$(printf '%s; ' "${off[@]}")"
+    er_result FAIL spool "${joined%; }"
+  else
+    er_result ok spool "${ER_SPOOL} and ${#ER_SPOOL_DIRS[@]} folders ${ER_USER}:${ER_USER} 2775, www-data in group"
+  fi
+}
+
+check_er_tools() {
+  local ffmpeg_version vmaf_version
+  ffmpeg_version="$(ffmpeg -hide_banner -version 2> /dev/null | awk 'NR == 1 { print $3 }' || true)"
+  vmaf_version=''
+  # The vmaf tool prints its version on stderr.
+  if [[ -x "$ER_VMAF_BIN" ]]; then
+    vmaf_version="$("$ER_VMAF_BIN" --version 2>&1 | head -n 1 || true)"
+  fi
+  if [[ -z "$ffmpeg_version" ]]; then
+    er_result FAIL tools 'ffmpeg not installed'
+  elif [[ -z "$vmaf_version" ]]; then
+    er_result FAIL tools "ffmpeg ${ffmpeg_version}; vmaf missing at ${ER_VMAF_BIN}"
+  else
+    er_result ok tools "ffmpeg ${ffmpeg_version}, vmaf ${vmaf_version}"
+  fi
+}
+
+check_er_plugin() {
+  local site target name
+  for site in "${ER_PLUGIN_SITES[@]}"; do
+    name="$(basename "$site")"
+    target="${site}/${ER_PLUGIN_SUBDIR}"
+    if [[ ! -d "$target" ]]; then
+      er_result FAIL plugin "${name}: ${target} missing"
+    elif ! diff -rq "$ER_PLUGIN_SOURCE" "$target" > /dev/null 2>&1; then
+      er_result FAIL plugin "${name}: ${target} differs from the checkout"
+    else
+      er_result ok plugin "${name}: matches the checkout"
+    fi
+  done
+}
+
+check_er_disk() {
+  local free
+  free="$(df --output=avail -B1 "$ER_SPOOL" 2> /dev/null | awk 'NR == 2 { print $1 }' || true)"
+  if [[ -z "$free" ]]; then
+    er_result FAIL disk "free space on ${ER_SPOOL} not read"
+  elif [[ "$free" -lt "$ER_DISK_FLOOR_BYTES" ]]; then
+    er_result WARN disk "$((free / 1024 / 1024 / 1024)) GiB free, under the 10 GiB floor: uploads are refused"
+  else
+    er_result ok disk "$((free / 1024 / 1024 / 1024)) GiB free (uploads refused under 10)"
+  fi
+}
+
+# The production upload login is a driver step; until it exists the tool runs
+# and only Send to production is off.
+check_er_login() {
+  if [[ -f "$ER_CREDENTIAL_FILE" ]]; then
+    er_result ok 'production login' "present: $(file_facts "$ER_CREDENTIAL_FILE")"
+  else
+    er_result WARN 'production login' "${ER_CREDENTIAL_FILE} absent: Send to production is off"
+  fi
+}
+
+run_encode_review_checks() {
+  if [[ "$1" != staging ]]; then
+    er_result skip 'encode review' "${1} never runs the tool"
+    return
+  fi
+  check_er_service
+  check_er_current
+  check_er_limits
+  check_er_spool
+  check_er_tools
+  check_er_plugin
+  check_er_disk
+  check_er_login
+}
+
 converge_status() {
   local short="$1"
   local environment ref key value line verdict
@@ -1039,6 +1221,10 @@ converge_status() {
   for line in "${DB_PROBLEMS[@]}"; do
     drift_reasons+=("$line")
   done
+  run_encode_review_checks "$environment"
+  for line in "${ER_PROBLEMS[@]}"; do
+    drift_reasons+=("$line")
+  done
 
   if [[ -z "$applied_sha" ]]; then
     verdict='UNAPPLIED'
@@ -1056,11 +1242,11 @@ converge_status() {
     for line in "${drift_reasons[@]}"; do
       reasons+="; ${line}"
     done
-    printf '%s: %s (applied %s, remote %s, owned %d changed %d missing, manual %d failed %d warned, patches %d failed %d warned, zones %d failed %d warned, local db %d failed)%s\n' \
+    printf '%s: %s (applied %s, remote %s, owned %d changed %d missing, manual %d failed %d warned, patches %d failed %d warned, zones %d failed %d warned, local db %d failed, encode review %d failed %d warned)%s\n' \
       "$environment" "$verdict" "${applied_short:-none}" "${remote_short:-unreachable}" \
       "${#changed_files[@]}" "${#missing_files[@]}" "$MANUAL_FAILED" "$MANUAL_WARNED" \
       "${#PATCH_PROBLEMS[@]}" "$PATCH_WARNED" "${#ZONE_PROBLEMS[@]}" "$ZONE_WARNED" \
-      "${#DB_PROBLEMS[@]}" "$reasons"
+      "${#DB_PROBLEMS[@]}" "${#ER_PROBLEMS[@]}" "$ER_WARNED" "$reasons"
   else
     printf '%-12s %s\n' environment "$environment" ref "$ref"
     if [[ -n "$applied_sha" ]]; then
@@ -1095,6 +1281,8 @@ converge_status() {
     printf '%s\n' "${ZONE_LINES[@]}"
     printf '%-12s %d failed\n' 'local db' "${#DB_PROBLEMS[@]}"
     printf '%s\n' "${DB_LINES[@]}"
+    printf '%-12s %d failed, %d warned\n' 'encode review' "${#ER_PROBLEMS[@]}" "$ER_WARNED"
+    printf '%s\n' "${ER_LINES[@]}"
     printf '%-12s %d failed, %d warned\n' manual "$MANUAL_FAILED" "$MANUAL_WARNED"
     printf '%s\n' "${MANUAL_LINES[@]}"
     for line in "${drift_reasons[@]}"; do

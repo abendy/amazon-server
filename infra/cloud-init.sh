@@ -37,6 +37,8 @@ declare \
 source "$(dirname "$SCRIPT_SOURCE")/php-sites.sh"
 # shellcheck source=infra/mysql-local.sh
 source "$(dirname "$SCRIPT_SOURCE")/mysql-local.sh"
+# shellcheck source=infra/encode-review.sh
+source "$(dirname "$SCRIPT_SOURCE")/encode-review.sh"
 # shellcheck source=infra/origin-auth.sh
 source "$(dirname "$SCRIPT_SOURCE")/origin-auth.sh"
 
@@ -197,7 +199,7 @@ export STAGING_GUILDS_CSS_PRAGMA STAGING_GUILDS_TLS_CERT STAGING_GUILDS_TLS_KEY
 export SITE_ERROR_LOG_LEVEL
 
 STAGING_TEMPLATE_VARS="\${STAGING_RSVP_SERVER_NAME} \${STAGING_RSVP_HTTP_CI_ENV} \${STAGING_RSVP_DOCROOT} \${STAGING_RSVP_PUBLIC_DOCROOT} \${STAGING_RSVP_EMBED_DOCROOT} \${STAGING_RSVP_FPM_SOCKET} \${STAGING_RSVP_AUTH_FILE} \${STAGING_RSVP_ACCESS_LOG} \${STAGING_RSVP_SCRIPTS_LOG} \${STAGING_RSVP_ERROR_LOG} \${STAGING_RSVP_EMBED_ACCESS_LOG} \${STAGING_RSVP_FRAME_OPTIONS} \${STAGING_RSVP_ASSET_EXPIRES} \${STAGING_RSVP_ASSET_CACHE_CONTROL} \${STAGING_RSVP_CSS_EXPIRES} \${STAGING_RSVP_CSS_CACHE_CONTROL} \${STAGING_RSVP_CSS_PRAGMA} \${STAGING_RSVP_EMBED_CORS_ORIGIN} \${STAGING_RSVP_EMBED_CORS_METHODS} \${STAGING_RSVP_EMBED_CORS_HEADERS} \${STAGING_RSVP_EMBED_CACHE_EXPIRES} \${STAGING_RSVP_EMBED_CACHE_CONTROL} \${STAGING_RSVP_TLS_CERT} \${STAGING_RSVP_TLS_KEY} \${STAGING_ACME_DOCROOT} \${STAGING_CSP_INCLUDE}"
-SITE_TEMPLATE_VARS="\${SITE_SERVER_NAME} \${SITE_DOCROOT} \${SITE_FPM_SOCKET} \${SITE_ACCESS_LOG} \${SITE_SCRIPTS_LOG} \${SITE_ERROR_LOG} \${SITE_ERROR_LOG_LEVEL} \${SITE_FRAME_OPTIONS} \${SITE_ASSET_EXPIRES} \${SITE_ASSET_CACHE_CONTROL} \${SITE_CSS_EXPIRES} \${SITE_CSS_CACHE_CONTROL} \${SITE_CSS_PRAGMA} \${SITE_TLS_CERT} \${SITE_TLS_KEY}"
+SITE_TEMPLATE_VARS="\${SITE_SERVER_NAME} \${SITE_DOCROOT} \${SITE_FPM_SOCKET} \${SITE_ACCESS_LOG} \${SITE_SCRIPTS_LOG} \${SITE_ERROR_LOG} \${SITE_ERROR_LOG_LEVEL} \${SITE_FRAME_OPTIONS} \${SITE_ASSET_EXPIRES} \${SITE_ASSET_CACHE_CONTROL} \${SITE_CSS_EXPIRES} \${SITE_CSS_CACHE_CONTROL} \${SITE_CSS_PRAGMA} \${SITE_TLS_CERT} \${SITE_TLS_KEY} \${SITE_ENCODE_REVIEW_INCLUDE}"
 
 export DEBIAN_FRONTEND='noninteractive'
 export PATH='/usr/sbin:/usr/bin:/sbin:/bin'
@@ -701,7 +703,7 @@ server {
   include includes/wordpress.conf;
 
   # Trust X-Forwarded-For from CloudFront only.
-  include includes/cloudfront-real-ip.conf;
+  include includes/cloudfront-real-ip.conf;${SITE_ENCODE_REVIEW_INCLUDE}
 }
 NGINX
 
@@ -735,7 +737,7 @@ server {
   include includes/wordpress.conf;
 
   # Trust X-Forwarded-For from CloudFront only.
-  include includes/cloudfront-real-ip.conf;
+  include includes/cloudfront-real-ip.conf;${SITE_ENCODE_REVIEW_INCLUDE}
 }
 NGINX
 
@@ -826,6 +828,7 @@ render_wordpress_server() {
   SITE_CSS_PRAGMA="$site_css_pragma"
   SITE_TLS_CERT="$site_tls_cert"
   SITE_TLS_KEY="$site_tls_key"
+  encode_review_site_include
   export SITE_SERVER_NAME SITE_DOCROOT SITE_FPM_SOCKET SITE_ACCESS_LOG
   export SITE_SCRIPTS_LOG SITE_ERROR_LOG SITE_FRAME_OPTIONS SITE_ASSET_EXPIRES
   export SITE_ASSET_CACHE_CONTROL SITE_CSS_EXPIRES SITE_CSS_CACHE_CONTROL
@@ -943,6 +946,7 @@ write_applied_state() {
 
 render_base_config
 write_logrotate
+encode_review_nginx
 render_rsvp_static_include
 origin_auth_render "$ORIGIN_AUTH_FILE" "$NGINX_ROOT/includes/origin-auth.conf"
 write_templates
@@ -994,6 +998,7 @@ systemctl reload nginx
 php_retire_stale
 php_purge_unused
 mysql_local_converge
+encode_review_converge
 
 install_reminder_cron
 install_confirmation_cron

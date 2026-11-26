@@ -1,0 +1,38 @@
+# Encode review queue worker, staging only. infra/encode-review.sh installs
+# this unit; see encode-review/README.md.
+#
+# The limits keep staging up while a trailer encodes next to MySQL, PHP-FPM
+# and nginx on a 2 GB, 2-vCPU burstable box: at most 800 MB of memory and
+# none of the swap file (which guards MySQL), one and a half CPUs, the lowest
+# CPU priority, and disk I/O only when nothing else wants it. x264 itself runs
+# two threads and VMAF one.
+[Unit]
+Description=Encode review queue worker (staging)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=encode-review
+Group=encode-review
+UMask=0002
+Environment=PYTHONUNBUFFERED=1
+Environment=ENCODE_REVIEW_VMAF=/opt/encode-review/bin/vmaf
+ExecStart=/usr/bin/python3 -B /opt/amazon-server/encode-review/worker/run.py --spool /srv/encode-review
+Restart=on-failure
+RestartSec=10
+
+MemoryMax=800M
+MemorySwapMax=0
+CPUQuota=150%
+Nice=19
+IOSchedulingClass=idle
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/srv/encode-review
+
+[Install]
+WantedBy=multi-user.target
