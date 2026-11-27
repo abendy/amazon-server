@@ -10,7 +10,11 @@
  * database, fields or posts.
  *
  * The record is the decision. The attachment's "_encode_review_send" meta
- * keeps a copy of a finished send for the Media screens.
+ * keeps a copy of a finished send for the Media screens, and the file record
+ * (_amzn_media) its production site, ID and URL. The worker finishes a send
+ * without WordPress, so the copy is made by whichever comes first: the
+ * WP-Cron sweep every five minutes (settle()), a read of the file record
+ * (Encode_Review_Record::get()), or the approved video's page.
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -20,6 +24,8 @@ class Encode_Review_Production {
 	const META    = '_encode_review_send';
 	const RECORD  = 'record.json';
 	const PAYLOAD = 'file.mp4';
+	const CRON    = 'encode_review_settle_sends';
+	const EVERY   = 'encode_review_five_minutes';
 
 	/** @var Encode_Review_Spool */
 	private $spool;
@@ -30,6 +36,48 @@ class Encode_Review_Production {
 	public function __construct( Encode_Review_Spool $spool, $site ) {
 		$this->spool = $spool;
 		$this->site  = $site;
+	}
+
+	/** Runs on every request type, not only admin: WP-Cron and WP-CLI run the sweep. */
+	public static function boot() {
+		add_filter( 'cron_schedules', array( __CLASS__, 'schedules' ) );
+		add_action( self::CRON, array( __CLASS__, 'settle_site' ) );
+		add_action( 'init', array( __CLASS__, 'schedule' ) );
+	}
+
+	public static function schedules( $schedules ) {
+		$schedules[ self::EVERY ] = array(
+			'interval' => 5 * MINUTE_IN_SECONDS,
+			'display'  => 'Every five minutes (encode review sends)',
+		);
+		return $schedules;
+	}
+
+	public static function schedule() {
+		if ( ! wp_next_scheduled( self::CRON ) ) {
+			wp_schedule_event( time(), self::EVERY, self::CRON );
+		}
+	}
+
+	/** The WP-Cron sweep for this site. */
+	public static function settle_site() {
+		( new self( new Encode_Review_Spool(), Encode_Review_Admin::site() ) )->settle();
+	}
+
+	/**
+	 * Copies every finished send of this site onto its attachment and file
+	 * record, where they do not hold it yet. Returns how many sends it read.
+	 */
+	public function settle() {
+		$read = 0;
+		foreach ( (array) glob( $this->spool->path( 'sends' ) . '/' . $this->site . '-*', GLOB_ONLYDIR ) as $dir ) {
+			if ( ! preg_match( '/-(\d+)$/', $dir, $match ) || 'attachment' !== get_post_type( (int) $match[1] ) ) {
+				continue;
+			}
+			$this->record( (int) $match[1] );
+			++$read;
+		}
+		return $read;
 	}
 
 	private function dir( $attachment_id ) {
@@ -45,8 +93,16 @@ class Encode_Review_Production {
 		return $record;
 	}
 
-	/** Copies a finished send onto the attachment, once. */
+	/** Copies a finished send onto the attachment and its file record, once. */
 	private function mirror( $attachment_id, array $record ) {
+		Encode_Review_Record::set_production(
+			$attachment_id,
+			array(
+				'site'          => $this->site,
+				'attachment_id' => (int) $record['production_id'],
+				'url'           => (string) ( $record['production_url'] ?? '' ),
+			)
+		);
 		$meta = get_post_meta( $attachment_id, self::META, true );
 		if ( is_array( $meta ) && ( $meta['production_id'] ?? 0 ) === (int) $record['production_id'] ) {
 			return;

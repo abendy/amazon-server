@@ -225,8 +225,66 @@ class Encode_Review_Spool {
 		return null;
 	}
 
-	public static function default_maxrate_k( $height ) {
-		return ( $height && $height <= 720 ) ? 3000 : 5000;
+	/**
+	 * The starting cap for a height: from the job's caps (copied from the
+	 * site's Upload limits page at upload) when it carries usable ones, else
+	 * the built-in 3 Mbit/s up to 720p and 5 Mbit/s above. Same rule as the
+	 * worker's media.cap_for_height().
+	 *
+	 * @param int        $height Video height in pixels, 0 when unknown.
+	 * @param array|null $caps   Bands of max_height (0: every taller video) and maxrate_k.
+	 */
+	public static function default_maxrate_k( $height, $caps = null ) {
+		$bands = array();
+		foreach ( is_array( $caps ) ? $caps : array() as $band ) {
+			if ( ! is_array( $band ) ) {
+				continue;
+			}
+			$top  = (int) ( $band['max_height'] ?? 0 );
+			$rate = (int) ( $band['maxrate_k'] ?? 0 );
+			if ( $rate > 0 && $top >= 0 ) {
+				$bands[] = array( $top, $rate );
+			}
+		}
+		if ( ! $bands ) {
+			return ( $height && $height <= 720 ) ? 3000 : 5000;
+		}
+		$bounded = array_values( array_filter( $bands, fn( $band ) => $band[0] > 0 ) );
+		sort( $bounded );
+		if ( $height > 0 ) {
+			foreach ( $bounded as $band ) {
+				if ( $height <= $band[0] ) {
+					return self::clamp_maxrate( $band[1] );
+				}
+			}
+		}
+		foreach ( $bands as $band ) {
+			if ( 0 === $band[0] ) {
+				return self::clamp_maxrate( $band[1] );
+			}
+		}
+		return self::clamp_maxrate( end( $bounded )[1] );
+	}
+
+	/**
+	 * The site's video caps from its Upload limits page, as the job records
+	 * them, or null when the page has no caps (or the site lacks the page).
+	 */
+	public static function page_video_caps() {
+		if ( ! function_exists( 'upload_limits_video_caps' ) ) {
+			return null;
+		}
+		$caps = array();
+		foreach ( (array) upload_limits_video_caps() as $row ) {
+			$rate = (int) round( (float) ( $row['mbps'] ?? 0 ) * 1000 );
+			if ( $rate > 0 ) {
+				$caps[] = array(
+					'max_height' => max( 0, (int) ( $row['max_height'] ?? 0 ) ),
+					'maxrate_k'  => $rate,
+				);
+			}
+		}
+		return $caps ?: null;
 	}
 
 	public static function clamp_crf( $crf ) {
@@ -512,6 +570,10 @@ class Encode_Review_Spool {
 		);
 		if ( ! empty( $upload['target'] ) ) {
 			$job['target'] = $upload['target'];
+		}
+		$caps = self::page_video_caps();
+		if ( $caps ) {
+			$job['video_caps'] = $caps;
 		}
 		$this->locked(
 			function () use ( $dir, $part, $target, $job ) {

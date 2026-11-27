@@ -74,9 +74,41 @@ class Preset:
         return self.maxrate_k * BUFFER_FACTOR
 
 
-def default_maxrate_k(height: int) -> int:
-    """The #553 cap: 3 Mbit/s up to 720p, 5 Mbit/s above."""
+def default_maxrate_k(height: int, caps: Any = None) -> int:
+    """The starting cap: the job's caps when it carries usable ones, else the #553 cap,
+    3 Mbit/s up to 720p and 5 Mbit/s above."""
+    cap = cap_for_height(height, caps)
+    if cap is not None:
+        return cap
     return 3000 if height <= 720 else 5000
+
+
+def cap_for_height(height: int, caps: Any) -> int | None:
+    """The cap in kbit/s for a height from the caps the upload copied from the site's
+    Upload limits page, or None when the job carries none.
+
+    Each band is {"max_height": pixels, "maxrate_k": kbit/s}; a max_height of 0 or none
+    is the band for every taller video. The lowest band that reaches the height wins.
+    A height above every band, or an unknown height (0), takes the band for every
+    taller video, else the tallest band.
+    """
+    bands: list[tuple[int, int]] = []
+    for band in caps if isinstance(caps, list) else []:
+        try:
+            top, rate = int((band or {}).get("max_height") or 0), int(band["maxrate_k"])
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+        if rate > 0 and top >= 0:
+            bands.append((top, rate))
+    if not bands:
+        return None
+    bounded = sorted(b for b in bands if b[0] > 0)
+    if height > 0:
+        for top, rate in bounded:
+            if height <= top:
+                return rate
+    open_ended = [rate for top, rate in bands if top == 0]
+    return open_ended[0] if open_ended else bounded[-1][1]
 
 
 def level_for(height: int) -> str | None:
@@ -88,11 +120,13 @@ def level_for(height: int) -> str | None:
     return None
 
 
-def make_preset(height: int, crf: int | None = None, maxrate_k: int | None = None) -> Preset:
-    """A preset for a source height, with requested values clamped to the allowed range."""
+def make_preset(height: int, crf: int | None = None, maxrate_k: int | None = None,
+                caps: Any = None) -> Preset:
+    """A preset for a source height, with requested values clamped to the allowed range.
+    Without a requested cap, the job's caps (if any) or the #553 cap set it."""
     crf = CRF_DEFAULT if crf is None else max(CRF_MIN, min(CRF_MAX, int(crf)))
     if maxrate_k is None:
-        maxrate_k = default_maxrate_k(height)
+        maxrate_k = default_maxrate_k(height, caps)
     maxrate_k = max(MAXRATE_MIN_K, min(MAXRATE_MAX_K, int(maxrate_k)))
     return Preset(crf=crf, maxrate_k=maxrate_k, level=level_for(height))
 

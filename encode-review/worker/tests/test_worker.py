@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import threading
 import time
@@ -119,6 +120,53 @@ class WorkerTest(unittest.TestCase):
         self.assertTrue((folder / "attempts" / "1" / "encode.mp4").is_file())
         self.assertLess(job["attempts"][1]["results"]["size_after"],
                         job["attempts"][0]["results"]["size_after"])
+
+    @unittest.skipUnless(have_vmaf(), "ffmpeg with libvmaf is not installed")
+    def test_caps_from_the_page_set_the_first_cap_and_the_original_is_hashed(self) -> None:
+        clip = make_clip(Path(self.tmp.name) / "clip.mp4", seconds=2)
+        caps = [{"max_height": 720, "maxrate_k": 2000}, {"max_height": 0, "maxrate_k": 6000}]
+        add_job(self.spool, "paged", original=clip, video_caps=caps)
+        add_job(self.spool, "plain", original=clip, queued_at=1)
+        self.assertTrue(self.worker.run_once())  # plain: queued first, no caps
+        self.assertTrue(self.worker.run_once())  # paged
+        expected = hashlib.sha256(clip.read_bytes()).hexdigest()
+        plain = read_json(self.spool.find("plain")[1] / "job.json")
+        paged = read_json(self.spool.find("paged")[1] / "job.json")
+        self.assertEqual((plain["attempts"][0]["maxrate_k"], plain["attempts"][0]["bufsize_k"]),
+                         (3000, 12000))
+        self.assertEqual((paged["attempts"][0]["maxrate_k"], paged["attempts"][0]["bufsize_k"]),
+                         (2000, 8000))
+        self.assertEqual(paged["video_caps"], caps)
+        self.assertEqual(plain["original"]["sha256"], expected)
+        self.assertEqual(paged["original"]["sha256"], expected)
+
+    def test_a_finished_job_without_a_hash_gets_one_and_keeps_everything_else(self) -> None:
+        # A job whose encode finished before the worker hashed originals.
+        attempt = {"n": 1, "status": "done", "crf": 21, "maxrate_k": 3000, "requested_at": 5}
+        job_dir = add_job(self.spool, "before-hashing", state="done", queued_at=5,
+                          attempts=[attempt], stage="ready")
+        (job_dir / "original.mp4").write_bytes(b"the original upload" * 1000)
+        before = read_json(job_dir / "job.json")
+        self.assertNotIn("sha256", before["original"])
+
+        self.assertTrue(self.worker.hash_finished())
+        self.assertFalse(self.worker.hash_finished())  # nothing left to hash
+
+        job = read_json(self.spool.find("before-hashing")[1] / "job.json")
+        expected = hashlib.sha256((job_dir / "original.mp4").read_bytes()).hexdigest()
+        self.assertEqual(self.spool.find("before-hashing")[0], "done")
+        self.assertEqual(job["original"]["sha256"], expected)
+        job["original"].pop("sha256")
+        self.assertEqual(job, before)  # attempts, stage and the 7-day clock unchanged
+
+    def test_a_finished_job_without_its_original_is_skipped_once(self) -> None:
+        job_dir = add_job(self.spool, "no-original", state="done")
+        (job_dir / "original.mp4").unlink()
+        with self.assertLogs("encode-review", level="WARNING") as logs:
+            self.assertFalse(self.worker.hash_finished())
+        self.assertFalse(self.worker.hash_finished())  # not retried, not logged again
+        self.assertEqual(len(logs.records), 1)
+        self.assertNotIn("sha256", read_json(job_dir / "job.json")["original"])
 
     @unittest.skipUnless(have_vmaf(), "ffmpeg with libvmaf is not installed")
     def test_playable_original_gets_no_reference_copy(self) -> None:

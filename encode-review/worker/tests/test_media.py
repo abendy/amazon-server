@@ -20,6 +20,31 @@ class PresetTest(unittest.TestCase):
         self.assertEqual((p720.maxrate_k, p720.bufsize_k, p720.level), (3000, 12000, "3.1"))
         self.assertIsNone(media.make_preset(2160).level)
 
+    def test_caps_from_the_job_set_the_default(self) -> None:
+        seeded = [{"max_height": 720, "maxrate_k": 3000}, {"max_height": 0, "maxrate_k": 5000}]
+        # The page's seeded caps give exactly the #553 defaults.
+        for height in (144, 480, 720, 721, 1080, 2160):
+            self.assertEqual(media.default_maxrate_k(height, seeded), media.default_maxrate_k(height))
+        changed = [{"max_height": None, "maxrate_k": 6000}, {"max_height": 720, "maxrate_k": 2500},
+                   {"max_height": 1080, "maxrate_k": 4000}]
+        self.assertEqual(media.default_maxrate_k(720, changed), 2500)
+        self.assertEqual(media.default_maxrate_k(1080, changed), 4000)
+        self.assertEqual(media.default_maxrate_k(1440, changed), 6000)
+        self.assertEqual(media.default_maxrate_k(0, changed), 6000)
+        # No band for every taller video: the tallest band covers them.
+        self.assertEqual(media.default_maxrate_k(2160, changed[1:]), 4000)
+        self.assertEqual(media.make_preset(1080, caps=changed).maxrate_k, 4000)
+        self.assertEqual(media.make_preset(1080, caps=[{"max_height": 0, "maxrate_k": 99999}]).maxrate_k,
+                         12000)
+        # A requested cap still wins over the job's caps.
+        self.assertEqual(media.make_preset(1080, maxrate_k=1500, caps=changed).maxrate_k, 1500)
+
+    def test_without_usable_caps_the_built_in_default_returns(self) -> None:
+        for caps in (None, [], {}, "x", [{"max_height": 720}], [{"maxrate_k": 0}],
+                     [{"max_height": "tall", "maxrate_k": 3000}], [None]):
+            self.assertEqual(media.default_maxrate_k(1080, caps), 5000, caps)
+            self.assertEqual(media.default_maxrate_k(720, caps), 3000, caps)
+
     def test_reference_command_keeps_size_and_rate_and_plays_in_browsers(self) -> None:
         facts = {"width": 1920, "height": 1080, "fps": 24.0, "duration": 100.0}
         cmd = media.reference_cmd(Path("in.mov"), Path("out.mp4"), facts)

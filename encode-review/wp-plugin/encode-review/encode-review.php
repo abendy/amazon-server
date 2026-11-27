@@ -32,7 +32,11 @@ define( 'ENCODE_REVIEW_VERSION', '1.3.0' );
 require_once __DIR__ . '/includes/class-encode-review-spool.php';
 require_once __DIR__ . '/includes/class-encode-review-fields.php';
 require_once __DIR__ . '/includes/class-encode-review-production.php';
+require_once __DIR__ . '/includes/class-encode-review-record.php';
 require_once __DIR__ . '/includes/class-encode-review-admin.php';
+
+// Finished sends reach the attachment's metas through WP-Cron, not only admin pages.
+add_action( 'plugins_loaded', array( 'Encode_Review_Production', 'boot' ) );
 
 if ( is_admin() ) {
 	add_action( 'plugins_loaded', array( 'Encode_Review_Admin', 'boot' ) );

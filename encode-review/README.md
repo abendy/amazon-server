@@ -132,6 +132,20 @@ admin page (PHP-FPM, www-data)            worker (systemd, encode-review user)
   1080p and 3 Mbit/s up to 720p, buffer always 4× the cap, high profile, level 4.1 or 3.1,
   `yuv420p`, AAC 128k stereo, first video and audio stream only, `+faststart`. People change only
   the CRF (18–26) and the cap (1–12 Mbit/s).
+- **Starting cap:** when the site's Upload limits page has video caps
+  (`upload_limits_video_caps()`), the upload copies them into `job.json` as `video_caps`. The
+  first attempt's cap and the redo form's "default for this size" come from those bands; a job
+  without them uses the built-in caps above. The page's seeded caps are the same numbers.
+- **File record:** approve writes `_amzn_media` on the new attachment: `source` (`encode`),
+  `original` (name, size, SHA-256), `settings` (CRF and cap), and empty `check`, `shared_with`,
+  `production` and `archive`. The worker hashes the original before its first encode, while it
+  is still on disk, and hashes any finished job that has no hash yet (one whose encode ran
+  before hashing existed). Approve refuses a job without the hash, so no new record has an empty
+  one. A finished send fills `production` (site, attachment ID, URL) and `_encode_review_send`
+  with no page visit: a WP-Cron sweep copies finished sends every five minutes, and
+  `Encode_Review_Record::get()` takes a finished send before it answers. The tool's other metas
+  are written as before. An attachment approved before the record existed has none stored;
+  `get()` builds one from its metas, with an empty SHA-256, and writes nothing.
 - **Checks per attempt:** VMAF mean, minimum and 1st percentile; the five worst non-overlapping
   2-second windows; faststart (`moov` before `mdat`); duration within 0.2 s.
 - **Scoring tool:** Ubuntu 24.04's `ffmpeg` has no `libvmaf` filter, so the installer adds

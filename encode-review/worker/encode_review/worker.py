@@ -6,7 +6,8 @@ or failed/. Between jobs it writes the heartbeat and runs the 7-day cleanup.
 
 The helper thread never encodes. It probes newly queued uploads, so the queue
 view can show a time estimate, and it runs sends to production and their
-lookups, so a send does not wait behind a long encode.
+lookups, so a send does not wait behind a long encode. It also hashes
+finished jobs that have no SHA-256 yet, so approval can record it.
 
 The heartbeat thread rewrites status.json every HEARTBEAT_S seconds for as
 long as the process lives, so the admin page sees a live encoder during a
@@ -16,6 +17,7 @@ long encode and a stale heartbeat within HEARTBEAT_STALE (plugin) of a stop.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 import os
 import shutil
@@ -33,9 +35,19 @@ POLL_S = 5
 CLEANUP_EVERY_S = 3600
 PROGRESS_EVERY_S = 5
 HEARTBEAT_S = 20
+HASH_CHUNK = 1024 * 1024
 # Seconds of work per second of video until the first job measures it
 # (plan: about 10-20 minutes for a 2-3 minute trailer).
 DEFAULT_SPEED = 6.0
+
+
+def sha256_file(path: Path) -> str:
+    """The SHA-256 of a file, read in 1 MiB parts."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(HASH_CHUNK), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def gigabytes(size: int) -> str:
@@ -53,6 +65,7 @@ class Worker:
         self.last_cleanup = 0.0
         self.environment: dict[str, Any] = {}
         self.stop = threading.Event()
+        self.unhashable: set[str] = set()
 
     # ---- heartbeat ---------------------------------------------------------
 
@@ -93,6 +106,14 @@ class Worker:
             job["probe"] = media.probe(job_dir / job["original"]["file"])
         return job["probe"]
 
+    def ensure_sha256(self, job_dir: Path, job: dict[str, Any]) -> None:
+        """Records the original's SHA-256 in job.json, once per job, while the original is
+        on disk: approval copies it into the file's record and then deletes the original."""
+        if job["original"].get("sha256"):
+            return
+        job["original"]["sha256"] = sha256_file(job_dir / job["original"]["file"])
+        self.update(job_dir, job)
+
     def run_job(self, job_dir: Path) -> Path:
         """Runs the newest attempt of a claimed job. Returns the job's final folder."""
         job = self.spool.load(job_dir)
@@ -111,8 +132,10 @@ class Worker:
         try:
             source = self.ensure_probe(job_dir, job)
             original = job_dir / job["original"]["file"]
+            self.ensure_sha256(job_dir, job)
             reference_s = self.ensure_reference(job_dir, job, original, source, log)
-            preset = media.make_preset(source["height"], attempt.get("crf"), attempt.get("maxrate_k"))
+            preset = media.make_preset(source["height"], attempt.get("crf"), attempt.get("maxrate_k"),
+                                       job.get("video_caps"))
             attempt.update(crf=preset.crf, maxrate_k=preset.maxrate_k, bufsize_k=preset.bufsize_k,
                            level=preset.level)
             job["stage"] = "encoding"
@@ -275,6 +298,39 @@ class Worker:
             except (OSError, ValueError, KeyError) as error:
                 LOG.warning("probe of %s skipped: %s", job_dir.name, error)
 
+    def hash_finished(self) -> bool:
+        """Hashes one finished job that has no SHA-256 yet. Returns True when it hashed one.
+
+        A job whose encode ran before the worker hashed originals sits in done/
+        without one, and approval waits for it (the page says so), because approval
+        deletes the original. Only the hash is added: the job keeps its attempts,
+        its place and its 7-day clock (updated_at). A job a redo moves meanwhile is
+        hashed by its next attempt instead.
+        """
+        for job_dir in self.spool.job_dirs("done"):
+            if job_dir.name in self.unhashable:
+                continue
+            try:
+                job = self.spool.load(job_dir)
+                if job["original"].get("sha256"):
+                    continue
+                digest = sha256_file(job_dir / job["original"]["file"])
+                with self.spool.state_lock():
+                    if not (job_dir / "job.json").exists():
+                        continue  # moved by a redo, or removed, meanwhile
+                    fresh = self.spool.load(job_dir)
+                    if fresh["original"].get("file") != job["original"]["file"]:
+                        continue
+                    fresh["original"]["sha256"] = digest
+                    write_json(job_dir / "job.json", fresh)
+            except (OSError, ValueError, KeyError) as error:
+                self.unhashable.add(job_dir.name)
+                LOG.warning("hash of %s skipped: %s", job_dir.name, error)
+                continue
+            LOG.info("job %s: original hashed for approval", job_dir.name)
+            return True
+        return False
+
     def run_sends(self) -> None:
         """Uploads queued sends, then settles unknown ones whose lookup is due."""
         for folder in send.pending_sends(self.spool):
@@ -291,6 +347,7 @@ class Worker:
             try:
                 self.probe_queued()
                 self.run_sends()
+                self.hash_finished()
             except Exception:  # noqa: BLE001 - the helper must outlive any one bad file
                 LOG.exception("helper pass failed")
             self.stop.wait(POLL_S)
@@ -383,6 +440,8 @@ def main(argv: list[str] | None = None) -> int:
             worker.run_once()
             worker.probe_queued()
             worker.run_sends()
+            while worker.hash_finished():
+                pass
             return 0
         LOG.info("worker started on %s (ffmpeg %s, vmaf %s)", spool.root,
                  worker.environment["ffmpeg"], worker.environment["vmaf"])

@@ -187,6 +187,11 @@ class Encode_Review_Admin {
 	 * original_playable and are judged as playable.
 	 */
 	private static function review_block( array $job ) {
+		if ( empty( $job['original']['sha256'] ) ) {
+			// Approval deletes the original, and the file record keeps its SHA-256.
+			return 'The encoder has not recorded the original\'s SHA-256 yet, so this job cannot be approved yet. '
+				. 'The file record keeps it after approval deletes the original. The encoder adds it within minutes while it runs; reload this page then.';
+		}
 		if ( false !== ( $job['original_playable'] ?? true ) ) {
 			return null;
 		}
@@ -412,6 +417,22 @@ class Encode_Review_Admin {
 				'original'    => $job['original']['name'],
 				'by'          => $user->user_login,
 				'at'          => time(),
+			)
+		);
+		// The worker hashed the original while it was on disk (review_block refuses a job
+		// without the hash); the original goes with the job below.
+		Encode_Review_Record::save(
+			$attachment_id,
+			Encode_Review_Record::for_encode(
+				array(
+					'name'   => (string) $job['original']['name'],
+					'size'   => (int) ( $job['original']['size'] ?? 0 ),
+					'sha256' => (string) $job['original']['sha256'],
+				),
+				array(
+					'crf'       => $attempt['crf'] ?? null,
+					'maxrate_k' => $attempt['maxrate_k'] ?? null,
+				)
 			)
 		);
 		$name = wp_basename( (string) get_attached_file( $attachment_id ) );
@@ -1004,7 +1025,8 @@ class Encode_Review_Admin {
 		$last   = end( $job['attempts'] );
 		$height = (int) ( $job['probe']['height'] ?? 0 );
 		$crf    = (int) ( $last['crf'] ?? Encode_Review_Spool::CRF_DEFAULT );
-		$cap    = (int) ( $last['maxrate_k'] ?? Encode_Review_Spool::default_maxrate_k( $height ) );
+		$caps   = $job['video_caps'] ?? null;
+		$cap    = (int) ( $last['maxrate_k'] ?? Encode_Review_Spool::default_maxrate_k( $height, $caps ) );
 		?>
 		<div class="er-card er-adjust">
 			<h2>Adjust and redo</h2>
@@ -1017,7 +1039,7 @@ class Encode_Review_Admin {
 					<span class="description">Lower is better quality and a bigger file. 21 is the usual start.</span></label></p>
 				<p><label>Bitrate cap (Mbit/s):
 					<input type="number" name="maxrate_mbps" min="1" max="12" step="0.5" value="<?php echo esc_attr( self::mbps( $cap ) ); ?>" class="small-text">
-					<span class="description">The default is <?php echo esc_html( self::mbps( Encode_Review_Spool::default_maxrate_k( $height ) ) ); ?> for this size. The buffer is always 4× the cap.</span></label></p>
+					<span class="description">The default is <?php echo esc_html( self::mbps( Encode_Review_Spool::default_maxrate_k( $height, $caps ) ) ); ?> for this size. The buffer is always 4× the cap.</span></label></p>
 				<button type="submit" class="button">Redo with these settings</button>
 				<span class="description">Earlier attempts stay here to compare.</span>
 			</form>
