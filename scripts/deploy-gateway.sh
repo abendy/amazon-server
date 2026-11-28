@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deploy the Indee gateway function to one exact, reviewed commit. Run on the operator machine,
-# from this repo, with the amazon-gateway-deploy profile (infra/IAM.md):
+# from this repo, with the amazon-gateway-deploy profile (infra/iam/gateway-deploy.md):
 #   scripts/deploy-gateway.sh plan     <gateway-repo> <target-full-sha> <branch>   reads only
 #   scripts/deploy-gateway.sh deploy   <gateway-repo> <target-full-sha> <branch>
 #   scripts/deploy-gateway.sh rollback <version>

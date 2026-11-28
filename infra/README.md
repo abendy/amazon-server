@@ -117,8 +117,8 @@ ratification before any origin switch.
 ## Instance access
 
 Temporary SSH comes from `lightsail:GetInstanceAccessDetails` (in `LightsailStagingRead`,
-see [`IAM.md`](IAM.md)). Every call generates a fresh key-and-certificate pair, valid for
-roughly five minutes. **Fetch both halves in one call** — a key from one call never
+see [`iam/terraform-staging.md`](iam/terraform-staging.md)). Every call generates a fresh
+key-and-certificate pair, valid for roughly five minutes. **Fetch both halves in one call** — a key from one call never
 matches a certificate from another, and the mismatch presents as
 `Permission denied (publickey)`.
 
@@ -393,7 +393,7 @@ instance.
 
 1. Run `sudo amazon-server-converge status` and note the patch lines.
 2. Take a snapshot from the operator machine and wait for `available`. Only the backup profile
-   can create and read snapshots (`IAM.md`):
+   can create and read snapshots ([`iam/backup.md`](iam/backup.md)):
 
    ```bash
    AWS_PROFILE=amazon-lightsail-backup aws lightsail create-instance-snapshot \

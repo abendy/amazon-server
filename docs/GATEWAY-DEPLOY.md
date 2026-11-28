@@ -10,8 +10,8 @@ change and runs only on the driver's go.
 
 ## What you need
 
-- The `amazon-gateway-deploy` AWS profile on the operator machine. [`infra/IAM.md`](../infra/IAM.md),
-  section "Gateway deploy profile", sets it up.
+- The `amazon-gateway-deploy` AWS profile on the operator machine. [`infra/iam/gateway-deploy.md`](../infra/iam/gateway-deploy.md)
+  sets it up.
 - A clone of the gateway repository, with the target commit pushed.
 - `node` 22 or newer, `git`, `curl`, `unzip`, `openssl` and `python3`.
 
